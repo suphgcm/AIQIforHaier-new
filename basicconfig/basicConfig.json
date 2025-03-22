@@ -1,0 +1,181 @@
+{
+  "pipelineCode": "CX202404151414000001",
+  "serverIp": "10.142.193.10",
+  "serverPort": 9003,
+  "deviceConfigList": [
+    {
+      "deviceTypeId": "1706875521972076547",
+      "deviceTypeName": "GPIO",
+      "deviceTypeCode": "GPIO",
+      "deviceCode": "DC500001",
+      "deviceSn": "SN500001",
+      "bios_id": "C58.C57-H2.XX"
+    },
+    {
+      "deviceTypeId": "1706875521972076546",
+      "deviceTypeName": "光电开关",
+      "deviceTypeCode": "light",
+      "deviceName": "光电开关1",
+      "deviceCode": "DC300001",
+      "ipAddr": "127.0.0.1",
+      "deviceSn": "SN100001",
+      "devicePin": "1",
+	  "stopFlag": true,
+      "deviceParamConfigList": [
+        {
+          "paramCode": "devicePin",
+          "paramName": "连接针脚",
+          "paramValue": "1"
+        },
+        {
+          "paramCode": "GPIODeviceCode",
+          "paramName": "GPIO设备编号编号",
+          "paramValue": "DC500001"
+        },
+        {
+          "paramCode": "linkedScanningGun",
+          "paramName": "扫码枪编码",
+          "paramValue": "DC300002"
+        }
+      ]
+    },
+    {
+      "deviceTypeId": "1699329639977881602",
+      "deviceTypeName": "扫码相机",
+      "deviceTypeCode": "ScanningGun",
+      "deviceName": "扫码相机1",
+      "deviceCode": "DC300002",
+      "ipAddr": "169.254.240.100",
+      "deviceSn": "00K11983019",
+      "deviceParamConfigList": [
+        {
+          "paramCode": "acquisitionFrameRate",
+          "paramName": "采集帧率",
+          "paramValue": "30"
+        },
+        {
+          "paramCode": "devicelatency",
+          "paramName": "延迟开始工作时间（ms）",
+          "paramValue": "0"
+        },
+        {
+          "paramCode": "exposureTime",
+          "paramName": "曝光时间",
+          "paramValue": "500"
+        },
+        {
+          "paramCode": "gain",
+          "paramName": "增益",
+          "paramValue": "12"
+        },
+        {
+          "paramCode": "acquisitionBurstFrameCount",
+          "paramName": "触发帧计数",
+          "paramValue": "10"
+        },
+        {
+          "paramCode": "lightSelectorEnable",
+          "paramName": "是否打开所有光源",
+          "paramValue": "1"
+        },
+        {
+          "paramCode": "currentPosition",
+          "paramName": "电机步长（mm）",
+          "paramValue": "1050"
+        }
+      ]
+    },
+    {
+      "deviceTypeId": "1699325315348467713",
+      "deviceTypeName": "相机",
+      "deviceTypeCode": "Camera",
+      "deviceName": "相机1",
+      "deviceCode": "DC300003",
+      "ipAddr": "169.254.152.211",
+      "deviceSn": "DA0780477",
+      "deviceParamConfigList": [
+        {
+          "paramCode": "acquisitionFrameRate",
+          "paramName": "采集帧率(Fps)",
+          "paramValue": "3"
+        },
+        {
+          "paramCode": "exposureTime",
+          "paramName": "曝光时间(us)",
+          "paramValue": "1300"
+        },
+        {
+          "paramCode": "gain",
+          "paramName": "增益(db)",
+          "paramValue": "10"
+        },
+        {
+          "paramCode": "devicelatency",
+          "paramName": "延迟开始工作时间（ms）",
+          "paramValue": "100"
+        },
+        {
+          "paramCode": "acquisitionBurstFrameCount",
+          "paramName": "触发帧计数",
+          "paramValue": "1"
+        },
+        {
+          "paramCode": "compressionQualit",
+          "paramName": "图片压缩质量",
+          "paramValue": "95"
+        },
+        {
+          "paramCode": "camera_interval",
+          "paramName": "拍照间隔（ms）",
+          "paramValue": "0"
+        }
+      ]
+    },
+    {
+      "deviceTypeId": "1699325315348467713",
+      "deviceTypeName": "相机",
+      "deviceTypeCode": "Camera",
+      "deviceName": "相机2",
+      "deviceCode": "DC300004",
+      "ipAddr": "169.254.152.210",
+      "deviceSn": "DA0896877",
+      "deviceParamConfigList": [
+        {
+          "paramCode": "acquisitionFrameRate",
+          "paramName": "采集帧率(Fps)",
+          "paramValue": "3"
+        },
+        {
+          "paramCode": "exposureTime",
+          "paramName": "曝光时间(us)",
+          "paramValue": "1000"
+        },
+        {
+          "paramCode": "gain",
+          "paramName": "增益(db)",
+          "paramValue": "5"
+        },
+        {
+          "paramCode": "devicelatency",
+          "paramName": "延迟开始工作时间（ms）",
+          "paramValue": "100"
+        },
+        {
+          "paramCode": "acquisitionBurstFrameCount",
+          "paramName": "触发帧计数",
+          "paramValue": "1"
+        },
+        {
+          "paramCode": "compressionQualit",
+          "paramName": "图片压缩质量",
+          "paramValue": "95"
+        },
+        {
+          "paramCode": "camera_interval",
+          "paramName": "拍照间隔（ms）",
+          "paramValue": "0"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+#pragma once
+
+#define WM_GPIOBASEMSG 1024
+#define WM_GPIO_ON (WM_GPIOBASEMSG + 1)
+#define WM_GPIO_OFF (WM_GPIOBASEMSG - 1)
