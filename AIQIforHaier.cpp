@@ -604,17 +604,18 @@ void createDevice(const nlohmann::json &deviceConfig)
 	case 1: { //Light switch
 		int pin;
 		std::string linkedScanningGun = "";
+		std::string gpioDeviceCode = "";
 		auto deviceParamList = deviceConfig.at("deviceParamConfigList");
 		for (auto deviceParam : deviceParamList) {
 			switch (light_param_map[deviceParam["paramCode"]]) {
-			case 0:
-				break;
-			case 1: {
+			case 0: 
 				linkedScanningGun = deviceParam["paramValue"];
 				break;
-			}
-			case 2:
+			case 1:
 				pin = std::stoi((std::string)deviceParam["paramValue"]);
+				break;
+			case 2:
+				gpioDeviceCode = deviceParam["paramValue"];
 				break;
 			default:
 				break;
@@ -628,6 +629,11 @@ void createDevice(const nlohmann::json &deviceConfig)
 		}
 		else {
 			trigger_map.find(pin)->second.push_back(linkedScanningGun);
+		}
+
+		if (device_map.find(gpioDeviceCode) != device_map.end()) {
+			auto gpioObj = std::dynamic_pointer_cast<GPIO>(device_map.find(gpioDeviceCode)->second);
+			gpioObj->addTriggerPin(pin);
 		}
 
 		auto lightSwitchObj = std::make_shared<LightSwitch>(pin, stopFlag, WM_GPIOBASEMSG, codereaderID, true, deviceGPIO, deviceTypeId, deviceTypeName, deviceTypeCode, deviceName, deviceCode);

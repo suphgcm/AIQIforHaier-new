@@ -7,12 +7,6 @@
 
 #include "equnit.h"
 
-struct messagepair {
-	UINT peMsgon;
-	UINT peMsgoff;
-	HWND hwnd;
-};
-
 class GPIO : public equnit {
 public:
 	static std::shared_ptr<GPIO> create(const std::string &deviceTypeId, const std::string &deviceTypeName, const std::string &deviceTypeCode,
@@ -25,8 +19,16 @@ public:
 		return gpioObj;
 	}
 
+    void addTriggerPin(int pin);
+
 private:
 	void *gpioHandle_ = nullptr;
+
+	struct triggerPin {
+		int pin;
+		unsigned char lastLevel;
+	};
+	std::vector<triggerPin> triggerPins;
 
 	std::thread threadHandle_;
 	bool isThreadRunning_ = false;
@@ -38,7 +40,7 @@ private:
 	void stopThread_();
 
 	int getPinLevel_(const int pinNumber, unsigned char &level);
-	void setPinLevel_(const char pinNumber, int level);
+	int setPinLevel_(int pinNumber, unsigned char level);
 
 	GPIO(std::string deviceCode): equnit("GPIO", deviceCode) {}
 	GPIO(std::string deviceTypeId, std::string deviceTypeName, std::string deviceTypeCode, 
