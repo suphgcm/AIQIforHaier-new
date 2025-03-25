@@ -1,9 +1,6 @@
 #pragma once
-
-#include <iostream>
+#include <vector>
 #include <thread>
-#include <atomic>
-#include <unordered_map>
 
 #include "equnit.h"
 

@@ -6,405 +6,234 @@
 #include <windows.h>
 #include "Log.h"
 
-MV_CODEREADER_DEVICE_INFO* CodeReader::GetCodeReaderByIpAddress() {
-	if (m_isGot) {
-		return m_mvDevInfo;
-	}
-
+bool CodeReader::getCodeReaderByIpAddress_() {
 	MV_CODEREADER_DEVICE_INFO_LIST stDeviceList;
 	memset(&stDeviceList, 0, sizeof(MV_CODEREADER_DEVICE_INFO_LIST));
 
-	int nRet = MV_CODEREADER_EnumDevices(&stDeviceList, MV_CODEREADER_GIGE_DEVICE);
-	if (nRet != MV_CODEREADER_OK) {
-		log_error("Enum codereader devices failed! ret=" + std::to_string(nRet));
-		return nullptr;
+	int ret = MV_CODEREADER_EnumDevices(&stDeviceList, MV_CODEREADER_GIGE_DEVICE);
+	if (ret != MV_CODEREADER_OK || stDeviceList.nDeviceNum <= 0) {
+		return false;
 	}
-	if (stDeviceList.nDeviceNum <= 0) {
-		log_error("Enum process doesn't found any codereader devices!");
-		return nullptr;
-	}
+
+	MV_CODEREADER_DEVICE_INFO *pstDevInfo = nullptr;
 	for (unsigned int i = 0; i < stDeviceList.nDeviceNum; i++) {
-		std::cout << "CodeReader[" << i << "]:" << std::endl;
-		MV_CODEREADER_DEVICE_INFO* pstMVDevInfo = stDeviceList.pDeviceInfo[i];
-		if (pstMVDevInfo == nullptr) {
+		 pstDevInfo = stDeviceList.pDeviceInfo[i];
+		if (pstDevInfo == nullptr) {
 			continue;
 		}
 
-		if (pstMVDevInfo->nTLayerType == MV_CODEREADER_GIGE_DEVICE) {
-			std::string name(reinterpret_cast<const char*>(pstMVDevInfo->SpecialInfo.stGigEInfo.chUserDefinedName), 16);
-			std::cout << "UserDefinedName: " << name << std::endl;
-
-			std::string serialNumber(reinterpret_cast<const char*>(pstMVDevInfo->SpecialInfo.stGigEInfo.chSerialNumber), 16);
-			std::cout << "SerialNumber: " << serialNumber << std::endl;
-
-			int nIp1 = ((pstMVDevInfo->SpecialInfo.stGigEInfo.nCurrentIp & 0xff000000) >> 24);
-			int nIp2 = ((pstMVDevInfo->SpecialInfo.stGigEInfo.nCurrentIp & 0x00ff0000) >> 16);
-			int nIp3 = ((pstMVDevInfo->SpecialInfo.stGigEInfo.nCurrentIp & 0x0000ff00) >> 8);
-			int nIp4 = (pstMVDevInfo->SpecialInfo.stGigEInfo.nCurrentIp & 0x000000ff);
+		if (pstDevInfo->nTLayerType == MV_CODEREADER_GIGE_DEVICE) {
+			int nIp1 = ((pstDevInfo->SpecialInfo.stGigEInfo.nCurrentIp & 0xff000000) >> 24);
+			int nIp2 = ((pstDevInfo->SpecialInfo.stGigEInfo.nCurrentIp & 0x00ff0000) >> 16);
+			int nIp3 = ((pstDevInfo->SpecialInfo.stGigEInfo.nCurrentIp & 0x0000ff00) >> 8);
+			int nIp4 = (pstDevInfo->SpecialInfo.stGigEInfo.nCurrentIp & 0x000000ff);
 			std::string ipAddress = std::to_string(nIp1) + '.' + std::to_string(nIp2) + '.' + std::to_string(nIp3) + '.' + std::to_string(nIp4);
-			if (ipAddress._Equal(cIPADDR)) {
-				log_info("Scancoder " + e_deviceCode + ": " + cIPADDR + " had been found successfully!");
-				m_mvDevInfo = pstMVDevInfo;
-				m_isGot = true;
-				return pstMVDevInfo;
+
+			if (ipAddress._Equal(ipAddr_)) {
+				devInfo_ = pstDevInfo;
+				return true;
 			}
-			
-		}
-		else if (pstMVDevInfo->nTLayerType == MV_CODEREADER_USB_DEVICE) {
-			std::cerr << "pstMVDevInfo->nTLayerType == MV_CODEREADER_USB_DEVICE, wrong!" << std::endl;
-		}
-		else {
-			std::cerr << "pstMVDevInfo->nTLayerType does not support." << std::endl;
 		}
 	}
-
-	log_error("Scancoder " + e_deviceCode + ": " + cIPADDR + " doesn't been found!");
-	return NULL;
-}
-
-bool CodeReader::Init() {
-	if (m_isInited) {
-		return true;
-	}
-	if (!m_isGot) {
-		std::cerr << "Code reader is not got yet." << std::endl;
-		return false;
-	}
-
-	// 创建句柄
-	int nRet = MV_CODEREADER_CreateHandle(&m_handle, m_mvDevInfo);
-	if (nRet != MV_CODEREADER_OK) {
-		log_error("Scancoder " + e_deviceCode + ": Create handle failed! ret=" + std::to_string(nRet));
-		return false;
-	}
-
-	// 连接设备 todo: 考虑中间出现 false 时的析构
-	nRet = MV_CODEREADER_OpenDevice(m_handle);
-	if (nRet != MV_CODEREADER_OK) {
-		log_error("Scancoder " + e_deviceCode + ": Open device failed! ret=" + std::to_string(nRet));
-		return false;
-	}
-
-	// 设置触发模式为 off todo: on?
-	nRet = MV_CODEREADER_SetEnumValue(m_handle, "TriggerMode", MV_CODEREADER_TRIGGER_MODE_ON);
-	if (nRet != MV_CODEREADER_OK) {
-		log_error("Scancoder " + e_deviceCode + ": Set trigger mode failed! ret=" + std::to_string(nRet));
-		return false;
-	}
-
-	// 选择软触发
-	nRet = MV_CODEREADER_SetEnumValue(m_handle, "TriggerSource", MV_CODEREADER_TRIGGER_SOURCE_SOFTWARE);
-	if (MV_CODEREADER_OK != nRet)
-	{
-		log_error("Scancoder " + e_deviceCode + ": Set software trigger source failed! ret=" + std::to_string(nRet));
-		return false;
-	}
-
-/*	// 设置关闭自动曝光
-	nRet = MV_CODEREADER_SetEnumValue(m_handle, "ExposureAuto", 0);
-	if (nRet != MV_CODEREADER_OK) {
-		printf("Set ExposureAuto fail! nRet [0x%x]\n", nRet);
-		return false;
-	}
-*/
-	// 设置曝光时间，设置曝光时间前请先关闭自动曝光，否则会设置失败
-	nRet = MV_CODEREADER_SetFloatValue(m_handle, "ExposureTime", m_exposureTime);
-	if (nRet != MV_CODEREADER_OK) {
-		log_error("Scancoder " + e_deviceCode + ": Set exposure time failed! ret=" + std::to_string(nRet));
-	}
-
-	// 设置采集帧率
-	nRet = MV_CODEREADER_SetFloatValue(m_handle, "AcquisitionFrameRate", m_acquisitionFrameRate);
-	if (nRet != MV_CODEREADER_OK) {
-		log_error("Scancoder " + e_deviceCode + ": Set Acquisition frame rate failed! ret=" + std::to_string(nRet));
-	}
-
-	// 应该不需要采集帧率控制
-/*
-	// 设置自动曝光增益
-	nRet = MV_CODEREADER_SetEnumValue(m_handle, "GainAuto", 0);
-	if (nRet != MV_CODEREADER_OK) {
-		printf("Set GainAuto fail [%x]\n", nRet);
-	}
-*/
-	// 设置曝光增益，请先关闭自动曝光增益否则失败
-	nRet = MV_CODEREADER_SetFloatValue(m_handle, "Gain", m_gain);
-	if (nRet != MV_CODEREADER_OK) {
-		log_error("Scancoder " + e_deviceCode + ": Set gain failed! ret=" + std::to_string(nRet));
-	}
-
-	// 设置光源
-	if (m_lightSelectorEnable == 1) {
-		nRet = MV_CODEREADER_SetCommandValue(m_handle, "LightingAllEnable");
-	}
-	else {
-		nRet = MV_CODEREADER_SetCommandValue(m_handle, "LightingAllDisEnable");
-	}
-	if (nRet != MV_CODEREADER_OK) {
-		log_error("Scancoder " + e_deviceCode + ": Set light failed! ret=" + std::to_string(nRet));
-	}
-
-	//// 设置电机步长 todo: 调整
-	//nRet = MV_CODEREADER_SetIntValue(m_handle, "CurrentStep", m_currentPosition);
-	//if (nRet != MV_CODEREADER_OK) {
-	//	printf("Set CurrentStep fail! nRet [0x%x]\n", nRet);
-	//}
-	m_isInited = true;
-	log_info("Scancoder " + e_deviceCode + ": Initiallize successfully!");
-	return true;
-}
-
-bool CodeReader::Destroy() {
-	if (!m_isInited) {
-		return true;
-	}
-	if (m_isGrabbing) {
-		StopGrabbing();
-	}
-
-	// 关闭连接
-	int nRet = MV_CODEREADER_CloseDevice(m_handle);
-	if (nRet != MV_CODEREADER_OK) {
-		printf("ClosDevice fail! nRet [0x%x]\n", nRet);
-		return false;
-	}
-
-	// 销毁句柄
-	nRet = MV_CODEREADER_DestroyHandle(m_handle);
-	while (nRet != MV_CODEREADER_OK) {
-		printf("Destroy Handle fail! nRet [0x%x]\n", nRet);
-		nRet = MV_CODEREADER_DestroyHandle(m_handle);
-	}
-
-	m_handle = nullptr;
-	m_isInited = false;
-	return true;
-}
-void* CodeReader::GetHandle() 
-{
-	return m_handle;
-}
-bool CodeReader::SetValuesForUninited(
-	float exposureTime, float acquisitionFrameRate, float gain, int acquisitionBurstFrameCount, 
-	int lightSelectorEnable, int currentPosition
-) {
-	if (m_isInited) {
-		return true;
-	}
-
-	m_exposureTime = exposureTime;
-	m_acquisitionFrameRate = acquisitionFrameRate;
-	m_gain = gain;
-	m_acquisitionBurstFrameCount = acquisitionBurstFrameCount;
-	m_lightSelectorEnable = lightSelectorEnable;
-	m_currentPosition = currentPosition;
 
 	return false;
 }
 
-bool CodeReader::SetValuesForInited(
-	float exposureTime, float acquisitionFrameRate, float gain, int acquisitionBurstFrameCount, 
-	int lightSelectorEnable, int currentPosition
-) {
-	log_info("Scancoder " + e_deviceCode + ": Start set scancoder parameter!");
-	if (!m_isInited) {
+bool CodeReader::init_() {
+	bool result = getCodeReaderByIpAddress_();
+	if (result != true) {
+		std::cerr << ("Scancoder " + getDeviceCode() + ": enumrate device failed!");
 		return false;
 	}
 
-	// 设置曝光时间
-	int nRet = MV_CODEREADER_SetFloatValue(m_handle, "ExposureTime", exposureTime);
-	if (nRet != MV_CODEREADER_OK) {
-		log_error("Scancoder " + e_deviceCode + ": Set ExposureTime failed! nRet=" + std::to_string(nRet));
+	int ret = MV_CODEREADER_CreateHandle(&handle_, devInfo_);
+	if (ret != MV_CODEREADER_OK) {
+		std::cerr << "Scancoder " + getDeviceCode() + ": Create handle failed! ret=" + std::to_string(ret);
 		return false;
 	}
-	m_exposureTime = exposureTime;
 
-	// 设置采集帧率
-	nRet = MV_CODEREADER_SetFloatValue(m_handle, "AcquisitionFrameRate", acquisitionFrameRate);
-	if (nRet != MV_CODEREADER_OK) {
-		log_error("Scancoder " + e_deviceCode + ": Set AcquisitionFrameRate failed! nRet=" + std::to_string(nRet));
+	ret = MV_CODEREADER_OpenDevice(handle_);
+	if (ret != MV_CODEREADER_OK) {
+		std::cerr << "Scancoder " + getDeviceCode() + ": Open device failed! ret=" + std::to_string(ret);
 		return false;
 	}
-	m_acquisitionFrameRate = acquisitionFrameRate;
 
-	// 设置曝光增益，请先关闭自动曝光增益否则失败
-	nRet = MV_CODEREADER_SetFloatValue(m_handle, "Gain", gain);
-	if (nRet != MV_CODEREADER_OK) {
-		log_error("Scancoder " + e_deviceCode + ": Set Gain fail! nRet=" + std::to_string(nRet));
-		return false;
+	// off auto exposure
+	ret = MV_CODEREADER_SetEnumValue(handle_, "ExposureAuto", 0);
+	if (ret != MV_CODEREADER_OK) {
+		std::cerr << "Scancoder " + getDeviceCode() + ": Set ExposureAuto fail! ret=" + std::to_string(ret);
 	}
-	m_gain = gain;
 
-	// 采集帧计数
-	m_acquisitionBurstFrameCount = acquisitionBurstFrameCount;
+	// off auto gain
+	ret = MV_CODEREADER_SetEnumValue(handle_, "GainAuto", 0);
+	if (ret != MV_CODEREADER_OK) {
+        std::cerr << "Scancoder " + getDeviceCode() + ": Set GainAuto fail! ret=" + std::to_string(ret);
+	}
 
-	// 设置光源
-	if (lightSelectorEnable == 1) {
-		nRet = MV_CODEREADER_SetCommandValue(m_handle, "LightingAllEnable");
+	// on trigger mode
+	ret = MV_CODEREADER_SetEnumValue(handle_, "TriggerMode", MV_CODEREADER_TRIGGER_MODE_ON);
+	if (ret != MV_CODEREADER_OK) {
+		std::cerr << "Scancoder " + getDeviceCode() + ": Set trigger mode failed! ret=" + std::to_string(ret);
 	}
-	else if (lightSelectorEnable == 0) {
-		nRet = MV_CODEREADER_SetCommandValue(m_handle, "LightingAllDisEnable");
-	}
-	else {
-		log_warn("Scancoder " + e_deviceCode + ": Light enable parameter is invalid");
-		return false;
-	}
-	if (nRet != MV_CODEREADER_OK) {
-		log_error("Scancoder " + e_deviceCode + ": Set light fail! nRet=" + std::to_string(nRet));
-		return false;
-	}
-	m_lightSelectorEnable = lightSelectorEnable;
 
-	//// 设置电机步长 todo: 调整
-	//nRet = MV_CODEREADER_SetIntValue(m_handle, "CurrentStep", currentPosition);
-	//if (nRet != MV_CODEREADER_OK) {
-	//	printf("Set CurrentStep fail! nRet [0x%x]\n", nRet);
-	//	// return false;
-	//}
-	m_currentPosition = currentPosition;
-	log_info("Scancoder " + e_deviceCode + ": Set scancoder config parameter successfully");
+	// select software trigger source
+	ret = MV_CODEREADER_SetEnumValue(handle_, "TriggerSource", MV_CODEREADER_TRIGGER_SOURCE_SOFTWARE);
+	if (ret != MV_CODEREADER_OK) {
+		std::cerr << "Scancoder " + getDeviceCode() + ": Set software trigger source failed! ret=" + std::to_string(ret);
+	}
+
+	// exposure time
+	ret = MV_CODEREADER_SetFloatValue(handle_, "ExposureTime", 1000);
+	if (ret != MV_CODEREADER_OK) {
+		std::cerr << "Scancoder " + getDeviceCode() + ": Set exposure time failed! ret=" + std::to_string(ret);
+	}
+
+	// acquisition frame rate
+	ret = MV_CODEREADER_SetFloatValue(handle_, "AcquisitionFrameRate", 30);
+	if (ret != MV_CODEREADER_OK) {
+		std::cerr << "Scancoder " + getDeviceCode() + ": Set Acquisition frame rate failed! ret=" + std::to_string(ret);
+	}
+
+	// gain
+	ret = MV_CODEREADER_SetFloatValue(handle_, "Gain", 1);
+	if (ret != MV_CODEREADER_OK) {
+		std::cerr << "Scancoder " + getDeviceCode() + ": Set gain failed! ret=" + std::to_string(ret);
+	}
+
 	return true;
 }
 
-bool CodeReader::SetValuesByJson(const nlohmann::json& deviceParamConfigList) {
-	float exposureTime = m_exposureTime;
-	float acquisitionFrameRate = m_acquisitionFrameRate;
-	float gain = m_gain;
-	int acquisitionBurstFrameCount = m_acquisitionBurstFrameCount;
-	int lightSelectorEnable = m_lightSelectorEnable;
-	int currentPosition = m_currentPosition;
+void CodeReader::destroy_() {
+	if (handle_ == nullptr) {
+		return;
+	}
+
+    MV_CODEREADER_CloseDevice(handle_);
+    MV_CODEREADER_DestroyHandle(handle_);
+
+	handle_ = nullptr;
+	devInfo_ = nullptr;
+	return;
+}
+
+bool CodeReader::startGrabbing_() {
+	if (handle_ == nullptr) {
+		return false;
+	}
+
+	int ret = MV_CODEREADER_StartGrabbing(handle_);
+	if (ret != MV_CODEREADER_OK) {
+		return false;
+	}
+
+	return true;
+}
+
+bool CodeReader::stopGrabbing_() {
+	if (handle_ == nullptr) {
+		return true;
+	}
+
+	int ret = MV_CODEREADER_StopGrabbing(handle_);
+	if (ret != MV_CODEREADER_OK) {
+		return false;
+	}
+
+	return true;
+}
+
+bool CodeReader::setParamByJson(const nlohmann::json &deviceParamConfigList) {
+	int ret = MV_CODEREADER_OK;
 
 	for (auto deviceParam : deviceParamConfigList) {
-		switch (ScanningGunParammap[deviceParam["paramCode"]]) {
-		case 0:
-			acquisitionFrameRate = std::stof((std::string)deviceParam["paramValue"]);
+		switch (scangun_param_map[deviceParam["paramCode"]]) {
+		case 0: {
+			float acquisitionFrameRate = std::stof((std::string)deviceParam["paramValue"]);
+			ret = MV_CODEREADER_SetFloatValue(handle_, "AcquisitionFrameRate", acquisitionFrameRate);
+			if (ret != MV_CODEREADER_OK) {
+				std::cerr << "Scancoder " + getDeviceCode() + ": Set Acquisition frame rate failed! ret=" + std::to_string(ret);
+			}
 			break;
+		}
 		case 1:
-			// devicelatency = deviceParam["paramValue"];
+			triggerLatency_ = std::stoi((std::string)deviceParam["paramValue"]);
 			break;
-		case 2:
-			exposureTime = std::stof((std::string)deviceParam["paramValue"]);
+		case 2: {
+			float exposureTime = std::stof((std::string)deviceParam["paramValue"]);
+			ret = MV_CODEREADER_SetFloatValue(handle_, "ExposureTime", 1000);
+			if (ret != MV_CODEREADER_OK) {
+				std::cerr << "Scancoder " + getDeviceCode() + ": Set exposure time failed! ret=" + std::to_string(ret);
+			}
 			break;
-		case 3:
-			gain = std::stof((std::string)deviceParam["paramValue"]);
+		}
+		case 3: {
+			float gain = std::stof((std::string)deviceParam["paramValue"]);
+			ret = MV_CODEREADER_SetFloatValue(handle_, "Gain", 1);
+			if (ret != MV_CODEREADER_OK) {
+				std::cerr << "Scancoder " + getDeviceCode() + ": Set gain failed! ret=" + std::to_string(ret);
+			}
 			break;
-		case 4:
-			acquisitionBurstFrameCount = std::stoi((std::string)deviceParam["paramValue"]);
+		}
+		case 4: {
+			int acquisitionBurstFrameCount = std::stoi((std::string)deviceParam["paramValue"]);
+			ret = MV_CODEREADER_SetIntValue(handle_, "AcquisitionBurstFrameCount", acquisitionBurstFrameCount);
+			if (ret != MV_CODEREADER_OK) {
+				std::cerr << "Scancoder " + getDeviceCode() + ": Set acquisiton burst frame count failed! ret=" + std::to_string(ret);
+			}
 			break;
-		case 5:
-			lightSelectorEnable = std::stoi((std::string)deviceParam["paramValue"]);
+		}
+		case 5: {
+			int lightSelectorEnable = std::stoi((std::string)deviceParam["paramValue"]);
+			if (lightSelectorEnable == 1) {
+				ret = MV_CODEREADER_SetCommandValue(handle_, "LightingAllEnable");
+			}
+			else {
+				ret = MV_CODEREADER_SetCommandValue(handle_, "LightingAllDisEnable");
+			}
+
+			if (ret != MV_CODEREADER_OK) {
+				std::cerr << "Scancoder " + getDeviceCode() + ": Set light failed! ret=" + std::to_string(ret);
+			}
+			break; 
+		}
+		case 6: {
+			int currentPosition = std::stoi((std::string)deviceParam["paramValue"]);
+			ret = MV_CODEREADER_SetIntValue(handle_, "CurrentStep", currentPosition);
+		    if (ret != MV_CODEREADER_OK) {
+				std::cerr << "Scancoder " + getDeviceCode() + ": Set CurrentStep failed! ret=" + std::to_string(ret);
+		    }
 			break;
-		case 6:
-			currentPosition = std::stoi((std::string)deviceParam["paramValue"]);
-			break;
+		}
 		default:
 			break;
 		}
 	}
 
-	if (m_isInited) {
-		return SetValuesForInited(exposureTime, acquisitionFrameRate, gain, acquisitionBurstFrameCount, lightSelectorEnable, currentPosition);
-	}
-	return SetValuesForUninited(exposureTime, acquisitionFrameRate, gain, acquisitionBurstFrameCount, lightSelectorEnable, currentPosition);
-}
-
-
-bool CodeReader::StartGrabbing() {
-	if (m_isGrabbing) {
-		return true;
-	}
-	if (!m_isInited) {
-		std::cerr << "Code reader is not inited yet." << std::endl;
-		return false;
-	}
-
-	int nRet = MV_CODEREADER_StartGrabbing(m_handle);
-	if (nRet != MV_CODEREADER_OK) {
-		log_error("Scancoder " + e_deviceCode + ": Start grabbing failed! nRet=" + std::to_string(nRet));
-		return false;
-	}
-
-	m_isGrabbing = true;
 	return true;
 }
 
+void CodeReader::getCode(std::vector<std::string> &codeVec) {
+	MV_CODEREADER_IMAGE_OUT_INFO_EX2 stFrameInfo = { 0 };
+	memset(&stFrameInfo, 0, sizeof(MV_CODEREADER_IMAGE_OUT_INFO_EX2));
 
-bool CodeReader::StopGrabbing() {
-	if (!m_isGrabbing) {
-		return true;
+	int ret = MV_CODEREADER_SetCommandValue(handle_, "TriggerSoftware");
+	if (ret != MV_CODEREADER_OK)
+	{
+		std::cerr << "Scancoder " + getDeviceCode() + ": Software trigger failed! ret=" + std::to_string(ret);
+		return;
 	}
 
-	int nRet = MV_CODEREADER_StopGrabbing(m_handle);
-	if (nRet != MV_CODEREADER_OK) {
-		log_error("Scancoder " + e_deviceCode + ": Stop grabbing failed! nRet=" + std::to_string(nRet));
-		return false;
+	ret = MV_CODEREADER_GetOneFrameTimeoutEx2(handle_, nullptr, &stFrameInfo, 1000);
+	if (ret != MV_CODEREADER_OK) {
+		std::cerr << "Scancoder " + getDeviceCode() + ": Get one frame failed! ret=" + std::to_string(ret);
+		return;
 	}
 
-	m_isGrabbing = false;
-	return true;
-}
+	MV_CODEREADER_RESULT_BCR_EX2 *pstBcrResult = (MV_CODEREADER_RESULT_BCR_EX2 *)stFrameInfo.UnparsedBcrList.pstCodeListEx2;
 
-int CodeReader::ReadCode(std::vector<std::string>& codes) const {
-	codes.clear();
-	unsigned char* pData = NULL;
-	MV_CODEREADER_RESULT_BCR_EX2* stBcrResult = NULL;
-	MV_CODEREADER_IMAGE_OUT_INFO_EX2 stImageInfo = { 0 };
-	int nRet = MV_CODEREADER_GetOneFrameTimeoutEx2(m_handle, &pData, &stImageInfo, 50);
-	if (nRet == MV_CODEREADER_OK) {
-
-		stBcrResult = (MV_CODEREADER_RESULT_BCR_EX2*)stImageInfo.UnparsedBcrList.pstCodeListEx2;
-
-		for (unsigned int i = 0; i < stBcrResult->nCodeNum; i++) {
-			std::string log = "Scancoder " + e_deviceCode + ": Prefetch code ";
-			log.append(stBcrResult->stBcrInfoEx2[i].chCode);
-			log_info(log);
-		}
+	for (unsigned int i = 0; i < pstBcrResult->nCodeNum; i++) {
+		codeVec.push_back(pstBcrResult->stBcrInfoEx2[i].chCode);
 	}
 
-	for (int i = 0; i < m_acquisitionBurstFrameCount; ++i) {
-		log_info("Scancoder " + e_deviceCode + ": Frame " + std::to_string(i) + " start!");
-		memset(&stImageInfo, 0, sizeof(MV_CODEREADER_IMAGE_OUT_INFO_EX2));
-		pData = NULL;
-
-		// 软触发
-		nRet = MV_CODEREADER_SetCommandValue(m_handle, "TriggerSoftware");
-		if (MV_CODEREADER_OK != nRet)
-		{
-			log_error("Scancoder " + e_deviceCode + ": Set Software Once failed! nRet=" + std::to_string(nRet));
-			continue;
-		}
-
-		nRet = MV_CODEREADER_GetOneFrameTimeoutEx2(m_handle, &pData, &stImageInfo, 2000);
-		if (nRet != MV_CODEREADER_OK) {
-			log_error("Scancoder " + e_deviceCode + ": Get one frame failed! nRet=" + std::to_string(nRet));
-			continue;
-		}
-
-		stBcrResult = (MV_CODEREADER_RESULT_BCR_EX2*)stImageInfo.UnparsedBcrList.pstCodeListEx2;
-
-		for (unsigned int i = 0; i < stBcrResult->nCodeNum; i++) {
-			codes.push_back(stBcrResult->stBcrInfoEx2[i].chCode); // 参数为 const char * 类型字符串
-		}
-
-		log_info("Scancoder " + e_deviceCode + ": Frame " + std::to_string(i) + " end!");
-		if (!codes.empty()) {
-			break;
-		}
-
-		std::this_thread::sleep_for(std::chrono::microseconds((long long)m_exposureTime));
-	}
-
-	return 0;
-}
-
-int CodeReader::GetAcquisitionBurstFrameCount() 
-{
-	return m_acquisitionBurstFrameCount;
-}
-
-void CodeReader::Lock() {
-	m_mutex.lock();
-}
-void CodeReader::UnLock() {
-	m_mutex.unlock();
+	return;
 }

@@ -22,7 +22,7 @@ public:
     }
 
     bool setParamByJson(const nlohmann::json &deviceParamConfigList);
-    bool getImage();
+    void getImage(std::vector<struct content>& imageVec);
 
 private:
     bool init_();

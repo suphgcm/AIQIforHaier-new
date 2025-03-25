@@ -641,24 +641,31 @@ void createDevice(const nlohmann::json &deviceConfig)
 		break;
 	}
 	case 2: { //Camera
-		std::string ipAddr = deviceConfig.at("ipAddr");
-		auto &deviceParamConfigList = deviceConfig["deviceParamConfigList"];
-		auto cameraObj = Camera::create(ipAddr, deviceParamConfigList, deviceTypeId, deviceTypeName, deviceTypeCode, deviceName, deviceCode);
-		if (cameraObj) {
-			device_map.insert(std::make_pair(deviceCode, cameraObj));
-		}
-		else {
-			log_error("Camera device " + deviceCode + " create failed!");
+		if (device_map.find(deviceCode) == device_map.end()) {
+			std::string ipAddr = deviceConfig.at("ipAddr");
+			auto& deviceParamConfigList = deviceConfig["deviceParamConfigList"];
+			auto cameraObj = Camera::create(ipAddr, deviceParamConfigList, deviceTypeId, deviceTypeName, deviceTypeCode, deviceName, deviceCode);
+			if (cameraObj) {
+				device_map.insert(std::make_pair(deviceCode, cameraObj));
+			}
+			else {
+				log_error("Camera device " + deviceCode + " create failed!");
+			}
 		}
 		break;
 	}
 	case 3: { //Scangun
-		std::string ipAddr = deviceConfig.at("ipAddr");
-		auto codeReaderObj = std::make_shared<CodeReader>(ipAddr, deviceTypeId, deviceTypeName, deviceTypeCode, deviceName, deviceCode);
-		if (deviceConfig.contains("deviceParamConfigList")) {
-			codeReaderObj->SetValuesByJson(deviceConfig["deviceParamConfigList"]);
+		if (device_map.find(deviceCode) == device_map.end()) {
+			std::string ipAddr = deviceConfig.at("ipAddr");
+			auto& deviceParamConfigList = deviceConfig["deviceParamConfigList"];
+			auto codeReaderObj = CodeReader::create(ipAddr, deviceParamConfigList, deviceTypeId, deviceTypeName, deviceTypeCode, deviceName, deviceCode);
+			if (codeReaderObj) {
+				device_map.insert(std::make_pair(deviceCode, codeReaderObj));
+			}
+			else {
+				log_error("Scangun device " + deviceCode + " create failed!");
+			}
 		}
-		device_map.insert(std::make_pair(deviceCode, codeReaderObj));
 		break;
 	}
 	case 4: { //Audio equitment
@@ -730,7 +737,7 @@ bool parseBasicConfig()
 			createDevice(deviceConfig);
 		}  
 	}
-	catch (const nlohmann::json::parse_error& e) {
+	catch (const nlohmann::json::parse_error &e) {
 		std::string errinfo = "Exception occur while parse basic config!, exception msg:";
 		errinfo.append(e.what());
 		log_error(errinfo);
@@ -739,6 +746,42 @@ bool parseBasicConfig()
 
 	return true;
 }
+
+void createProduct(const nlohmann::json &productConfig)
+{
+
+}
+
+bool parsePipelineConfig()
+{
+	std::string path = projDir.c_str();
+	path.append("\\pipelineconfig\\pipelineConfig.json");
+
+	std::ifstream pipelineConfigFile(path);
+	if (!pipelineConfigFile.is_open()) {
+		log_error("Open pipeline configuration file failed!");
+		return false;
+	}
+
+	try {
+		nlohmann::json jsonObj = nlohmann::json::parse(pipelineConfigFile);
+		pipelineConfigFile.close();
+
+		nlohmann::json productConfigList = jsonObj.at("productConfigList");
+		for (auto &productConfig : productConfigList) {
+			createProduct(productConfig);
+		}
+	}
+	catch (const nlohmann::json::parse_error &e) {
+		std::string errinfo = "Exception occur while parse pipeline config!, exception msg:";
+		errinfo.append(e.what());
+		log_error(errinfo);
+		return false;
+	}
+
+	return true;
+}
+
 
 // 处理得到 productMap
 bool FetchPipeLineConfigFile() {

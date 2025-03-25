@@ -1,11 +1,9 @@
-#include <vector>
+#include <iostream>
 #include <thread>
 
 #include <Uhi.h>
-#include "MessageQueue.h"
 #include "GPIO.h"
-
-extern class MessageQueue<struct gpioMsg> GpioMessageQueue;
+#include "MessageQueue.h"
 
 bool GPIO::init_() {
 	gpioHandle_ = new(Uhi);
@@ -64,8 +62,8 @@ int GPIO::setPinLevel_(int pinNumber, unsigned char level) {
 	return 0;
 }
 
-void GPIO::mainWorkThread(void* param) {
-	GPIO* gpio = static_cast<GPIO*>(param);
+void GPIO::mainWorkThread(void *param) {
+	GPIO *gpio = static_cast<GPIO *>(param);
 
 	while (gpio->isThreadRunning_ == true) {
 		for (auto &triPin : gpio->triggerPins) {
@@ -77,7 +75,7 @@ void GPIO::mainWorkThread(void* param) {
 
 			unsigned char lastLevel = triPin.lastLevel;
 			if (level == 1 && lastLevel == 0) {
-				// TODO: trigger off 
+				// TODO: trigger off
 			}
 
 			if (level == 0 && lastLevel == 1) {
@@ -114,7 +112,7 @@ void GPIO::stopThread_() {
 }
 
 void GPIO::addTriggerPin(int pin) {
-	struct triggerPin triPin = {};
+	struct triggerPin triPin = { 0 };
 
 	triPin.pin = pin;
 	triPin.lastLevel = 1;

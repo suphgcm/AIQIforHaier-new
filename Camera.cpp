@@ -1,6 +1,5 @@
-#include <mutex>
-#include <string>
 #include <thread>
+#include <string>
 
 #include "Camera.h"
 
@@ -8,28 +7,27 @@ bool Camera::getCameraByIpAddress_() {
 	MV_CC_DEVICE_INFO_LIST deviceList;
 	memset(&deviceList, 0, sizeof(MV_CC_DEVICE_INFO_LIST));
 
-	int nRet = MV_CC_EnumDevices(MV_GIGE_DEVICE, &deviceList);
-	if (nRet != MV_OK) {
-		return false;
-	}
-	if (deviceList.nDeviceNum <= 0) {
+	int ret = MV_CC_EnumDevices(MV_GIGE_DEVICE, &deviceList);
+	if (ret != MV_OK || deviceList.nDeviceNum <= 0) {
 		return false;
 	}
 
+	MV_CC_DEVICE_INFO *pstDevInfo = nullptr;
 	for (unsigned int i = 0; i < deviceList.nDeviceNum; i++) {
-		MV_CC_DEVICE_INFO* devInfo = deviceList.pDeviceInfo[i];
-		if (devInfo == nullptr) {
-			break;
+		pstDevInfo = deviceList.pDeviceInfo[i];
+		if (pstDevInfo == nullptr) {
+			continue;
 		}
 
-		if (devInfo->nTLayerType == MV_GIGE_DEVICE) {
-			int nIp1 = ((devInfo->SpecialInfo.stGigEInfo.nCurrentIp & 0xff000000) >> 24);
-			int nIp2 = ((devInfo->SpecialInfo.stGigEInfo.nCurrentIp & 0x00ff0000) >> 16);
-			int nIp3 = ((devInfo->SpecialInfo.stGigEInfo.nCurrentIp & 0x0000ff00) >> 8);
-			int nIp4 = (devInfo->SpecialInfo.stGigEInfo.nCurrentIp & 0x000000ff);
+		if (pstDevInfo->nTLayerType == MV_GIGE_DEVICE) {
+			int nIp1 = ((pstDevInfo->SpecialInfo.stGigEInfo.nCurrentIp & 0xff000000) >> 24);
+			int nIp2 = ((pstDevInfo->SpecialInfo.stGigEInfo.nCurrentIp & 0x00ff0000) >> 16);
+			int nIp3 = ((pstDevInfo->SpecialInfo.stGigEInfo.nCurrentIp & 0x0000ff00) >> 8);
+			int nIp4 = (pstDevInfo->SpecialInfo.stGigEInfo.nCurrentIp & 0x000000ff);
 			std::string ipAddress = std::to_string(nIp1) + '.' + std::to_string(nIp2) + '.' + std::to_string(nIp3) + '.' + std::to_string(nIp4);
+
 			if (ipAddress._Equal(ipAddr_)) {
-				devInfo_ = devInfo;
+				devInfo_ = pstDevInfo;
 				return true;
 			}
 		}
@@ -139,8 +137,8 @@ bool Camera::startGrabbing_() {
 		return false;
 	}
 
-	int nRet = MV_CC_StartGrabbing(handle_);
-	if (nRet != MV_OK) {
+	int ret = MV_CC_StartGrabbing(handle_);
+	if (ret != MV_OK) {
 		return false;
 	}
 
@@ -152,15 +150,15 @@ bool Camera::stopGrabbing_() {
 		return true;
 	}
 
-	int nRet = MV_CC_StopGrabbing(handle_);
-	if (nRet != MV_OK) {
+	int ret = MV_CC_StopGrabbing(handle_);
+	if (ret != MV_OK) {
 		return false;
 	}
 
 	return true;
 }
 
-bool Camera::setParamByJson(const nlohmann::json& deviceParamConfigList) {
+bool Camera::setParamByJson(const nlohmann::json &deviceParamConfigList) {
 	int ret = MV_OK;
 
 	for (auto deviceParam : deviceParamConfigList) {
@@ -214,9 +212,13 @@ bool Camera::setParamByJson(const nlohmann::json& deviceParamConfigList) {
 	return true;
 }
 
+struct content {
+	long long sampleTime;
+	std::unique_ptr<unsigned char[]> buf;
+	unsigned int contentLen;
+};
 
-
-bool Camera::getImage() {
+void Camera::getImage(std::vector<struct content> &imageVec) {
 	int ret = MV_OK;
 
 	for (int i = 0; i < acquisitionFrameCount_; ++i) {
@@ -224,7 +226,7 @@ bool Camera::getImage() {
 
 		int ret = MV_CC_GetImageBuffer(handle_, &stOutFrame, 1000);
 		if (ret != MV_OK) {
-			return false;
+			return;
 		}
 
 		MV_SAVE_IMAGE_PARAM_EX3 to_jpeg;
@@ -235,7 +237,8 @@ bool Camera::getImage() {
 		to_jpeg.nHeight = stOutFrame.stFrameInfo.nHeight;
 		// 15M
 		unsigned int bufferSize = 15 * 1024 * 1024;
-		to_jpeg.pImageBuffer = std::make_unique<unsigned char>(bufferSize).get(); //new unsigned char[bufferSize];
+		auto imageBuf = std::make_unique<unsigned char[]>(bufferSize);
+		to_jpeg.pImageBuffer = imageBuf.get();
 		to_jpeg.nBufferSize = bufferSize;
 		to_jpeg.enImageType = MV_Image_Jpeg;
 		to_jpeg.nJpgQuality = compressionQuality_;
@@ -244,9 +247,19 @@ bool Camera::getImage() {
 		ret = MV_CC_SaveImageEx3(handle_, &to_jpeg);
 		if (ret != MV_OK) {
 			MV_CC_FreeImageBuffer(handle_, &stOutFrame);
-			return false;
+			return;
 		}
 
+		auto now = std::chrono::system_clock::now();
+		auto duration = now.time_since_epoch();
+		auto sampleTime = std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
+
+		struct content image;
+		image.sampleTime = sampleTime;
+		image.buf = std::move(imageBuf);
+		image.contentLen = to_jpeg.nImageLen;
+
+		imageVec.push_back(image);
 /*
 		std::string filePath = projDir.c_str();
 		filePath.append("\\" + pipelineCode + "\\" + unit->productSn + "\\" + unit->processesCode + "\\" + std::to_string(milliseconds) + ".jpeg");
@@ -267,5 +280,5 @@ bool Camera::getImage() {
 		std::this_thread::sleep_for(std::chrono::milliseconds(acquisitionFrameInterval_));
 	}
 
-	return true;
+	return;
 }

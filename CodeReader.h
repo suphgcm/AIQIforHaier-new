@@ -1,53 +1,46 @@
 #pragma once
-#include "equnit.h"
-#include "MvCodeReaderCtrl/MvCodeReaderCtrl.h"
-#include "MvCodeReaderCtrl/MvCodeReaderParams.h"
 #include <vector>
 #include "nlohmann/json.hpp"
 
-class CodeReader :
-    public equnit
+#include "equnit.h"
+#include "MvCodeReaderCtrl/MvCodeReaderCtrl.h"
+#include "MvCodeReaderCtrl/MvCodeReaderParams.h"
+
+class CodeReader : public equnit
 {
-private:
-    std::string cIPADDR;
-    void* m_handle = nullptr;
-    MV_CODEREADER_DEVICE_INFO* m_mvDevInfo = nullptr;
-
-    float m_exposureTime = 1000.0f;
-    float m_acquisitionFrameRate = 3.0f;
-    float m_gain = 10.0f;
-    int m_acquisitionBurstFrameCount = 1;
-    int m_lightSelectorEnable = 1;
-    int m_currentPosition = 900;
-
-    bool m_isGot = false;
-    bool m_isInited = false;
-    bool m_isGrabbing = false;
-    std::mutex m_mutex;
-
 public:
-    CodeReader() {}
-    CodeReader(std::string IP_ADDR, std::string deviceTypeId, std::string deviceTypeName, std::string deviceTypeCode, std::string deviceName, std::string deviceCode) :
-        equnit(deviceTypeId, deviceTypeName, deviceTypeCode, deviceName, deviceCode), cIPADDR(IP_ADDR) {}
-    ~CodeReader() { StopGrabbing(); Destroy(); }
+    static std::shared_ptr<CodeReader> create(const std::string ipAddr, const nlohmann::json &deviceParamConfigList,
+        const std::string &deviceTypeId, const std::string &deviceTypeName, const std::string &deviceTypeCode,
+        const std::string &deviceName, const std::string &deviceCode) {
+        auto CodeReaderObj = std::make_shared<CodeReader>(ipAddr, deviceTypeId, deviceTypeName, deviceTypeCode, deviceName, deviceCode);
+        if (CodeReaderObj->init_()) {
+            CodeReaderObj->setParamByJson(deviceParamConfigList);
+            CodeReaderObj->startGrabbing_();
 
-    MV_CODEREADER_DEVICE_INFO* GetCodeReaderByIpAddress();
+            return CodeReaderObj;
+        }
 
-    bool Init();
-    bool Destroy();
+        return nullptr;
+    }
 
-    bool SetValuesForUninited(float exposureTime, float acquisitionFrameRate, float gain, int acquisitionBurstFrameCount, int lightSelectorEnable, int currentPosition);
-    bool SetValuesForInited(float exposureTime, float acquisitionFrameRate, float gain, int acquisitionBurstFrameCount, int lightSelectorEnable, int currentPosition);
-    bool SetValuesByJson(const nlohmann::json& deviceParamConfigList);
+    bool setParamByJson(const nlohmann::json &deviceParamConfigList);
+    void getCode(std::vector<std::string> &codeVec);
 
-    bool StartGrabbing();
-    bool StopGrabbing();
+private:
+    bool init_();
+    void destroy_();
+    bool startGrabbing_();
+    bool stopGrabbing_();
+    bool getCodeReaderByIpAddress_();
 
-    int ReadCode(std::vector<std::string>& results) const;
-    
-    int GetAcquisitionBurstFrameCount();
-    void* GetHandle();
-    void Lock();
-    void UnLock();
-    // Ö´ÐÐË³Ðò£ºSetValuesByJson -> Init -> SetValuesByJson -> StartGrabbing -> ReadCode -> SetValuesByJson -> SetValuesForInited -> StartGrabbing -> ReadCode -> StopGrabbing -> Destroy
+    CodeReader(std::string deviceTypeCode, std::string deviceCode):equnit(deviceTypeCode, deviceCode) {}
+    CodeReader(std::string ipAddr, std::string deviceTypeId, std::string deviceTypeName, std::string deviceTypeCode, std::string deviceName, std::string deviceCode) :
+        equnit(deviceTypeId, deviceTypeName, deviceTypeCode, deviceName, deviceCode), ipAddr_(ipAddr) {}
+    ~CodeReader() { stopGrabbing_(); destroy_(); }
+
+    std::string ipAddr_;
+    void *handle_ = nullptr;
+    MV_CODEREADER_DEVICE_INFO *devInfo_ = nullptr;
+
+    int triggerLatency_;
 };
