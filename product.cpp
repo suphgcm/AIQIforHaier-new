@@ -1,14 +1,13 @@
 #include "product.h"
 
-ProcessUnit* insertProcessUnit(ProcessUnit* listhead, ProcessUnit* node) {
-	ProcessUnit* find = listhead->nextunit;
-	while (find != listhead && node->laterncy > find->laterncy) {
-		find = find->nextunit;
+void Product::addProcessUnit(int gpioPin, std::shared_ptr<ProcessUnit> unit) {
+	if (testListMap.find(gpioPin) == testListMap.end()) {
+		std::queue<std::shared_ptr<ProcessUnit>> unitQueue;
+		testListMap.insert(std::make_pair(gpioPin, unitQueue));
 	}
 
-	find->prevunit->nextunit = node;
-	node->nextunit = find;
-	node->prevunit = find->prevunit;
-	find->prevunit = node;
-	return listhead;
+	auto &unitQue = testListMap.find(gpioPin)->second;
+	unitQue.push(unit);
+
+	return;
 }

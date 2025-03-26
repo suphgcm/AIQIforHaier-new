@@ -27,6 +27,8 @@
 #include "WZSerialPort.h"
 #include "Log.h"
 #include "resource.h"
+#include "product.h"
+#include "GPIO.h"
 
 #pragma comment(lib, "ws2_32.lib")
 
@@ -747,9 +749,66 @@ bool parseBasicConfig()
 	return true;
 }
 
+void createProcessUnit(const nlohmann::json &deviceConfig, std::shared_ptr<ProcessUnit> &processUnit) {
+	std::string deviceCode = deviceConfig["deviceCode"];
+	std::string deviceTypeCode = deviceConfig["deviceTypeCode"];
+
+	switch (device_type_map[deviceTypeCode]) {
+	case 0:
+		break;
+	case 1: {
+
+	}
+	case 2: {
+
+	}
+	default:
+		break;
+	}
+	return;
+}
+
 void createProduct(const nlohmann::json &productConfig)
 {
+	std::string productName = productConfig["productName"];
+	std::string productSnCode = productConfig.at("productSnCode");
+	std::string productSnModel = productConfig["productSnModel"];
 
+	auto product = std::make_shared<Product>(productSnCode, productName, productSnModel);
+
+	nlohmann::json processConfigList = productConfig["processConfigList"];
+	for (auto &processConfig : processConfigList) {
+		std::string processCode = processConfig.at("processCode");
+		std::string processTemplateCode = processConfig["processTemplateCode"];
+		std::string processTemplateName = processConfig["processTemplateName"];
+		nlohmann::json &deviceConfigList = processConfig["deviceConfigList"];
+
+		int gpioPin = 0;
+		for (auto &deviceConfig : deviceConfigList) {
+			std::string deviceCode = deviceConfig["deviceCode"];
+			std::string deviceTypeCode = deviceConfig["deviceTypeCode"];
+
+			if (device_type_map[deviceTypeCode] == 1) {
+				auto lightObj = dynamic_pointer_cast<std::shared_ptr<Light>>(device_map.find(deviceCode)->second);
+				gpioPin = lightObj->getLinkPin;
+				continue;
+			}
+
+			auto curUnit = std::make_shared<ProcessUnit>();
+			curUnit->productName = productName;
+			curUnit->productSnCode = productSnCode;
+			curUnit->productSnModel = productSnModel;
+			curUnit->processesCode = processCode;
+			curUnit->processesTemplateCode = processTemplateCode;
+			curUnit->processesTemplateName= processTemplateName;
+			createProcessUnit(deviceConfig, curUnit);
+
+			product->addProcessUnit(gpioPin, curUnit);
+		}
+	}
+
+	product_map.insert(std::make_pair(productSnCode, product));
+	return;
 }
 
 bool parsePipelineConfig()

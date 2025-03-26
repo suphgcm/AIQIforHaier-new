@@ -1,5 +1,6 @@
 #include <thread>
 #include <string>
+#include <chrono>
 
 #include "Camera.h"
 
