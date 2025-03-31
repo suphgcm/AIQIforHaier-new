@@ -62,6 +62,8 @@ int GPIO::setPinLevel_(int pinNumber, unsigned char level) {
 	return 0;
 }
 
+class MessageQueue<struct GpioEvent> gpio_msg_queue;
+
 void GPIO::mainWorkThread(void *param) {
 	GPIO *gpio = static_cast<GPIO *>(param);
 
@@ -74,12 +76,16 @@ void GPIO::mainWorkThread(void *param) {
 			}
 
 			unsigned char lastLevel = triPin.lastLevel;
+			// Trigger off
 			if (level == 1 && lastLevel == 0) {
-				// TODO: trigger off
+				struct GpioEvent event = { triPin.pin, kTriggerOff};
+				gpio_msg_queue.push(event);
 			}
 
+			// Trigger on
 			if (level == 0 && lastLevel == 1) {
-				// TODO: trigger on
+				struct GpioEvent event = { triPin.pin, kTriggerOn };
+				gpio_msg_queue.push(event);
 			}
 
 			triPin.lastLevel = level;

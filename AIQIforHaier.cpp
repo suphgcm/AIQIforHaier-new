@@ -3,7 +3,6 @@
 #define _CRT_SECURE_NO_WARNINGS
 #define NOMINMAX
 #include <cstdio>
-#include <WinSock2.h>
 #include <nlohmann/json.hpp>
 #include <iostream>
 #include <fstream>
@@ -12,10 +11,8 @@
 #include <locale>
 #include <unordered_map>
 #include <filesystem>
-#include <Windows.h>
 #include <cstdlib>
 #include <list>
-#include <WinHttp.h>
 #include <sstream>
 #include <thread>
 #include <chrono>
@@ -30,8 +27,6 @@
 #include "product.h"
 #include "GPIO.h"
 
-#pragma comment(lib, "ws2_32.lib")
-
 std::mutex mtx[8];
 bool isPinTriggered[8]; // GPIO 针脚是否触发状态
 int remoteCtrlPin;
@@ -39,6 +34,8 @@ int remoteCtrlPin;
 std::string pipeline_code = "CX202309141454000002"; // 一台工控机只跑一个 pipeline
 std::string server_ip = "192.168.0.189";
 int server_port = 9003;
+
+
 int stopFlagPin = 1;
 std::string pipelineName;
 
@@ -273,226 +270,6 @@ void GpioMsgProc(struct gpioMsg& msg)
 	return;
 }
 
-DWORD HttpServer(LPVOID lpParam)
-{
-	httplib::Server svr;
-
-	svr.Post("/alarm", [](const httplib::Request& req, httplib::Response& res) {
-		log_info("Current device test failed, alarm!");
-        GPIO* deviceGPIO = dynamic_cast<GPIO*>(deviceMap.find("DC500001")->second);
-        deviceGPIO->SetPinLevel(5, 1);
-        std::this_thread::sleep_for(std::chrono::seconds(3));
-        deviceGPIO->SetPinLevel(5, 0);
-
-        res.set_content(req.body, "application/json");
-    });
-
-	svr.Post("/notify", [](const httplib::Request& req, httplib::Response& res) {
-		log_info("Pipeline configuration modified, reload!");
-		// 检查参数中是否有"flag"
-		nlohmann::json jsonobj = nlohmann::json::parse(req.body);
-
-		//		std::string pipeconfig = jsonobj["data"];
-		//		nlohmann::json jsonobj1 = nlohmann::json::parse(pipeconfig);
-		nlohmann::json& jsonobj1 = jsonobj["data"];
-		auto map = ParsePipelineConfig(jsonobj1);
-		std::unique_lock<std::mutex> lock(map_mutex);
-		productMap = map;
-		lock.unlock();
-		std::string configPath = projDir.c_str();
-		configPath.append("\\productconfig\\pipelineConfig.json");
-		std::ofstream config_file(configPath, std::ofstream::trunc);
-		std::string pipeconfig = jsonobj1.dump(4);
-		config_file << pipeconfig;
-		config_file.close();
-		res.set_content(req.body, "application/json");
-		});
-
-	svr.listen("0.0.0.0", 9090);
-	return 0;
-}
-
-bool ParseBasicConfig()
-{
-	std::string configfile = projDir.c_str();
-	configfile.append("\\basicconfig\\basicConfig.json");
-	std::ifstream jsonFile(configfile);
-	if (!jsonFile.is_open()) {
-		log_error("Open basic configuration file failed!");
-		return false;
-	}
-
-	// 解析 json
-	jsonFile.seekg(0);
-	nlohmann::json jsonObj;
-	try {
-		jsonFile >> jsonObj;
-		jsonFile.close();
-		pipelineCode = jsonObj["pipelineCode"];
-		serverPort = jsonObj["serverPort"];
-		serverIp = jsonObj["serverIp"];
-		nlohmann::json deviceConfigList = jsonObj["deviceConfigList"];
-		for (const auto& deviceConfig : deviceConfigList) {
-			std::string sdeviceTypeId, sdeviceTypeName, sdeviceTypeCode, sdeviceCode, sdeviceName;
-			if (deviceConfig.contains("deviceTypeId")) {
-				sdeviceTypeId = deviceConfig["deviceTypeId"];
-			}
-			if (deviceConfig.contains("deviceTypeName")) {
-				sdeviceTypeName = deviceConfig["deviceTypeName"];
-			}
-			if (deviceConfig.contains("deviceName")) {
-				sdeviceName = deviceConfig["deviceName"];
-			}
-			sdeviceTypeCode = deviceConfig["deviceTypeCode"];
-			sdeviceCode = deviceConfig["deviceCode"];
-			switch (deviceTypeCodemap[sdeviceTypeCode]) {
-				case 0: { //GPIO设备
-					std::string sbios = deviceConfig["bios_id"];
-					const char* cbioa = sbios.data();
-					char* pbios = new char[std::strlen(cbioa) + 1];
-					std::strcpy(pbios, cbioa);
-
-					if (deviceMap.find(sdeviceCode) == deviceMap.end()) {
-						GPIO* deviceGPIO = new GPIO(sdeviceTypeId, sdeviceTypeName, sdeviceTypeCode, sdeviceCode, sdeviceName, pbios, 8, WM_GPIOBASEMSG);
-						deviceMap.insert(std::make_pair(sdeviceCode, deviceGPIO));
-					}
-					else {
-						GPIO* deviceGPIO = dynamic_cast<GPIO*>(deviceMap.find(sdeviceCode)->second);
-						deviceGPIO->SetGpioParam(sdeviceTypeId, sdeviceTypeName, sdeviceTypeCode, sdeviceName,pbios, 8, WM_GPIOBASEMSG);
-					}
-					break;
-				}
-
-				case 1: { //光电开关
-					GPIO* deviceGPIO = NULL;
-					int pin;
-					bool stopFlag = false;
-					if (deviceConfig.contains("stopFlag")) {
-						stopFlag = deviceConfig["stopFlag"];
-					}
-					if (deviceConfig.contains("deviceParamConfigList")) {
-						auto deviceParamConfigList = deviceConfig["deviceParamConfigList"];
-
-						for (auto deviceParamConfig : deviceParamConfigList) {
-							switch (lightParammap[deviceParamConfig["paramCode"]]) {
-							case 0://延迟开始工作时间（ms）
-								break;
-							case 1: {//扫码枪编码
-								std::string linkedScanningGun = deviceParamConfig["paramValue"];
-								if (triggerMaps.find(pin) == triggerMaps.end()) {
-									//如果triggerMap对应pin脚未绑定，创建vlinkedScanningGun的vector，并插入triggerMaps
-									std::vector<std::string> vlinkedScanningGun;
-									vlinkedScanningGun.push_back(linkedScanningGun);
-									triggerMaps.insert(std::make_pair(pin, vlinkedScanningGun));
-								}
-								else {
-									//如果triggerMap中已经存在已绑定的码枪vector，在vector中增加一个
-									triggerMaps.find(pin)->second.push_back(linkedScanningGun);
-								}
-								break;
-							}
-							case 2://pin脚 TODO: 最先处理
-								pin = std::stoi((std::string)deviceParamConfig["paramValue"]);
-								break;
-							case 3: {//GPIO设备号*/
-								std::string GPIODeviceCode = deviceParamConfig["paramValue"];
-								if (deviceMap.find(GPIODeviceCode) == deviceMap.end()) {
-									deviceGPIO = new GPIO(GPIODeviceCode);
-									deviceMap.insert(std::make_pair(GPIODeviceCode, deviceGPIO));
-								}
-								else {
-									deviceGPIO = dynamic_cast<GPIO*>(deviceMap.find(GPIODeviceCode)->second);
-								}
-								break;
-							}
-							default:
-								break;
-							}
-						}
-					}
-
-					std::string codereaderID = "";
-					peSwitch* lSwitch = new peSwitch(pin, stopFlag, WM_GPIOBASEMSG, codereaderID, true, deviceGPIO, sdeviceTypeId, sdeviceTypeName, sdeviceTypeCode, sdeviceCode, sdeviceName);
-					deviceMap.insert(std::make_pair(sdeviceCode, lSwitch));
-					break;
-				}
-				case 2: { //摄像机
-					std::string ipAddr = deviceConfig["ipAddr"];
-					Camera* cdevice = new Camera(ipAddr, sdeviceTypeId, sdeviceTypeName, sdeviceTypeCode, sdeviceCode, sdeviceName);
-					if (deviceConfig.contains("deviceParamConfigList")) {
-						cdevice->SetValuesByJson(deviceConfig["deviceParamConfigList"]);
-					}
-					deviceMap.insert(std::make_pair(sdeviceCode, cdevice));
-					break;
-				}
-				case 3: { //扫码枪
-					std::string ipAddr = deviceConfig["ipAddr"];
-					CodeReader* cddevice = new CodeReader(ipAddr, sdeviceTypeId, sdeviceTypeName, sdeviceTypeCode, sdeviceCode, sdeviceName);
-					if (deviceConfig.contains("deviceParamConfigList")) {
-						cddevice->SetValuesByJson(deviceConfig["deviceParamConfigList"]);
-					}
-					deviceMap.insert(std::make_pair(sdeviceCode, cddevice));
-					break;
-				}
-				case 4: { //音频设备
-					AudioEquipment* audioDevice = new AudioEquipment(sdeviceTypeId, sdeviceTypeName, sdeviceTypeCode, sdeviceCode, sdeviceName);
-					deviceMap.insert(std::make_pair(sdeviceCode, audioDevice));
-					break;
-				}
-				case 5: { //遥控器
-					std::string portName = "COM3";
-					int baudRate = 38400;
-					std::string message = "";
-					int devicePin = 0;
-					if (deviceConfig.contains("deviceParamConfigList")) {
-						auto deviceParamConfigList = deviceConfig["deviceParamConfigList"];
-						for (auto deviceParamConfig : deviceParamConfigList) {
-							switch (RemoteControlParammap[deviceParamConfig["paramCode"]]) {
-							case 0:
-								// devicelatency
-								break;
-							case 1:
-								// baudRate
-								baudRate = std::stoi((std::string)deviceParamConfig["paramValue"]);
-								break;
-							case 2:
-								portName = deviceParamConfig["paramValue"];
-								break;
-							case 3:
-								message = deviceParamConfig["paramValue"];
-								break;
-							case 4:
-								devicePin = remoteCtrlPin = std::stoi((std::string)deviceParamConfig["paramValue"]);
-							default:
-								break;
-							}
-						}
-
-					}
-					SerialCommunication* scDevice = new SerialCommunication(sdeviceTypeId, sdeviceTypeName, sdeviceTypeCode, sdeviceCode, sdeviceName, portName, baudRate, message, devicePin);
-					deviceMap.insert(std::make_pair(sdeviceCode, scDevice));
-					break;
-				}
-				case 6: { //音频设备
-					AudioEquipment* audioDevice = new AudioEquipment(sdeviceTypeId, sdeviceTypeName, sdeviceTypeCode, sdeviceCode, sdeviceName);
-					deviceMap.insert(std::make_pair(sdeviceCode, audioDevice));
-					break;
-				}
-				default:
-				    break;
-			}
-		}
-	}
-	catch (const nlohmann::json::parse_error& e) {
-		std::string errinfo = "Exception occur while parse basic config!, exception msg:";
-		errinfo.append(e.what());
-		log_error(errinfo);
-		return false;
-	}
-
-	return true;
-}
-
 // 各个按钮对应的函数
 bool StartDeviceSelfTesting() {
 	int testCount = 0;
@@ -580,555 +357,8 @@ bool StartDeviceSelfTesting() {
 	return true;
 }
 
-void createDevice(const nlohmann::json &deviceConfig)
-{
-	std::string deviceTypeId, deviceTypeCode, deviceTypeName, deviceCode, deviceName;
-
-	deviceCode = deviceConfig.at("deviceCode");
-	deviceName = deviceConfig["deviceName"];
-	deviceTypeCode = deviceConfig.at("deviceTypeCode");
-	deviceTypeName = deviceConfig["deviceTypeName"];
-	deviceTypeId = deviceConfig["deviceTypeId"];
-
-	switch (device_type_map[deviceTypeCode]) {
-	case 0: { //Gpio
-		if (device_map.find(deviceCode) == device_map.end()) {
-			auto gpioObj = GPIO::create(deviceTypeId, deviceTypeName, deviceTypeCode, deviceName, deviceCode);
-			if (gpioObj) {
-				device_map.insert(std::make_pair(deviceCode, gpioObj));
-			}
-			else {
-				log_error("Gpio device " + deviceCode + " create failed!");
-			}
-		}
-		break;
-	}
-	case 1: { //Light switch
-		int pin;
-		std::string linkedScanningGun = "";
-		std::string gpioDeviceCode = "";
-		auto deviceParamList = deviceConfig.at("deviceParamConfigList");
-		for (auto deviceParam : deviceParamList) {
-			switch (light_param_map[deviceParam["paramCode"]]) {
-			case 0: 
-				linkedScanningGun = deviceParam["paramValue"];
-				break;
-			case 1:
-				pin = std::stoi((std::string)deviceParam["paramValue"]);
-				break;
-			case 2:
-				gpioDeviceCode = deviceParam["paramValue"];
-				break;
-			default:
-				break;
-			}
-		}
-
-		if (trigger_map.find(pin) == trigger_map.end()) {
-			std::vector<std::string> vlinkedScanningGun;
-			vlinkedScanningGun.push_back(linkedScanningGun);
-			trigger_map.insert(std::make_pair(pin, vlinkedScanningGun));
-		}
-		else {
-			trigger_map.find(pin)->second.push_back(linkedScanningGun);
-		}
-
-		if (device_map.find(gpioDeviceCode) != device_map.end()) {
-			auto gpioObj = std::dynamic_pointer_cast<GPIO>(device_map.find(gpioDeviceCode)->second);
-			gpioObj->addTriggerPin(pin);
-		}
-
-		auto lightSwitchObj = std::make_shared<LightSwitch>(pin, stopFlag, WM_GPIOBASEMSG, codereaderID, true, deviceGPIO, deviceTypeId, deviceTypeName, deviceTypeCode, deviceName, deviceCode);
-		device_map.insert(std::make_pair(deviceCode, lightSwitchObj));
-		break;
-	}
-	case 2: { //Camera
-		if (device_map.find(deviceCode) == device_map.end()) {
-			std::string ipAddr = deviceConfig.at("ipAddr");
-			auto& deviceParamConfigList = deviceConfig["deviceParamConfigList"];
-			auto cameraObj = Camera::create(ipAddr, deviceParamConfigList, deviceTypeId, deviceTypeName, deviceTypeCode, deviceName, deviceCode);
-			if (cameraObj) {
-				device_map.insert(std::make_pair(deviceCode, cameraObj));
-			}
-			else {
-				log_error("Camera device " + deviceCode + " create failed!");
-			}
-		}
-		break;
-	}
-	case 3: { //Scangun
-		if (device_map.find(deviceCode) == device_map.end()) {
-			std::string ipAddr = deviceConfig.at("ipAddr");
-			auto& deviceParamConfigList = deviceConfig["deviceParamConfigList"];
-			auto codeReaderObj = CodeReader::create(ipAddr, deviceParamConfigList, deviceTypeId, deviceTypeName, deviceTypeCode, deviceName, deviceCode);
-			if (codeReaderObj) {
-				device_map.insert(std::make_pair(deviceCode, codeReaderObj));
-			}
-			else {
-				log_error("Scangun device " + deviceCode + " create failed!");
-			}
-		}
-		break;
-	}
-	case 4: { //Audio equitment
-		auto audioObj = std::make_shared<AudioEquipment>(deviceTypeId, deviceTypeName, deviceTypeCode, deviceName, deviceCode);
-		device_map.insert(std::make_pair(deviceCode, audioObj));
-		break;
-	}
-	case 5: { //Serial port
-		std::string portName = "";
-		int baudRate = 9600;
-		std::string message = "";
-		int devicePin = 0;
-		if (deviceConfig.contains("deviceParamConfigList")) {
-			auto deviceParamConfigList = deviceConfig["deviceParamConfigList"];
-			for (auto deviceParamConfig : deviceParamConfigList) {
-				switch (serialport_param_map[deviceParamConfig["paramCode"]]) {
-				case 0:
-					// devicelatency
-					break;
-				case 1:
-					// baudRate
-					baudRate = std::stoi((std::string)deviceParamConfig["paramValue"]);
-					break;
-				case 2:
-					portName = deviceParamConfig["paramValue"];
-					break;
-				case 3:
-					message = deviceParamConfig["paramValue"];
-					break;
-				case 4:
-					devicePin = remoteCtrlPin = std::stoi((std::string)deviceParamConfig["paramValue"]);
-				default:
-					break;
-				}
-			}
-		}
-		SerialCommunication* scDevice = new SerialCommunication(sdeviceTypeId, sdeviceTypeName, sdeviceTypeCode, sdeviceCode, sdeviceName, portName, baudRate, message, devicePin);
-		device_map.insert(std::make_pair(sdeviceCode, scDevice));
-		break;
-	}
-	default:
-		break;
-	}
-
-	return;
-}
-
-bool parseBasicConfig()
-{
-	std::string path = projDir.c_str();
-	path.append("\\basicconfig\\basicConfig.json");
-
-	std::ifstream configFile(path);
-	if (!configFile.is_open()) {
-		log_error("Open basic configuration file failed!");
-		return false;
-	}
-
-	try {
-		nlohmann::json jsonObj = nlohmann::json::parse(configFile);
-		configFile.close();
-
-		pipeline_code = jsonObj.at("pipelineCode");
-		server_ip = jsonObj.at("serverIp");
-		server_port = jsonObj.at("serverPort");
-
-		nlohmann::json deviceConfigList = jsonObj.at("deviceConfigList");
-		for (auto &deviceConfig : deviceConfigList) {
-			createDevice(deviceConfig);
-		}  
-	}
-	catch (const nlohmann::json::parse_error &e) {
-		std::string errinfo = "Exception occur while parse basic config!, exception msg:";
-		errinfo.append(e.what());
-		log_error(errinfo);
-		return false;
-	}
-
-	return true;
-}
-
-void createProcessUnit(const nlohmann::json &deviceConfig, std::shared_ptr<ProcessUnit> &processUnit) {
-	std::string deviceCode = deviceConfig["deviceCode"];
-	std::string deviceTypeCode = deviceConfig["deviceTypeCode"];
-
-	switch (device_type_map[deviceTypeCode]) {
-	case 0:
-		break;
-	case 1: {
-
-	}
-	case 2: {
-
-	}
-	default:
-		break;
-	}
-	return;
-}
-
-void createProduct(const nlohmann::json &productConfig)
-{
-	std::string productName = productConfig["productName"];
-	std::string productSnCode = productConfig.at("productSnCode");
-	std::string productSnModel = productConfig["productSnModel"];
-
-	auto product = std::make_shared<Product>(productSnCode, productName, productSnModel);
-
-	nlohmann::json processConfigList = productConfig["processConfigList"];
-	for (auto &processConfig : processConfigList) {
-		std::string processCode = processConfig.at("processCode");
-		std::string processTemplateCode = processConfig["processTemplateCode"];
-		std::string processTemplateName = processConfig["processTemplateName"];
-		nlohmann::json &deviceConfigList = processConfig["deviceConfigList"];
-
-		int gpioPin = 0;
-		for (auto &deviceConfig : deviceConfigList) {
-			std::string deviceCode = deviceConfig["deviceCode"];
-			std::string deviceTypeCode = deviceConfig["deviceTypeCode"];
-
-			if (device_type_map[deviceTypeCode] == 1) {
-				auto lightObj = dynamic_pointer_cast<std::shared_ptr<Light>>(device_map.find(deviceCode)->second);
-				gpioPin = lightObj->getLinkPin;
-				continue;
-			}
-
-			auto curUnit = std::make_shared<ProcessUnit>();
-			curUnit->productName = productName;
-			curUnit->productSnCode = productSnCode;
-			curUnit->productSnModel = productSnModel;
-			curUnit->processesCode = processCode;
-			curUnit->processesTemplateCode = processTemplateCode;
-			curUnit->processesTemplateName= processTemplateName;
-			createProcessUnit(deviceConfig, curUnit);
-
-			product->addProcessUnit(gpioPin, curUnit);
-		}
-	}
-
-	product_map.insert(std::make_pair(productSnCode, product));
-	return;
-}
-
-bool parsePipelineConfig()
-{
-	std::string path = projDir.c_str();
-	path.append("\\pipelineconfig\\pipelineConfig.json");
-
-	std::ifstream pipelineConfigFile(path);
-	if (!pipelineConfigFile.is_open()) {
-		log_error("Open pipeline configuration file failed!");
-		return false;
-	}
-
-	try {
-		nlohmann::json jsonObj = nlohmann::json::parse(pipelineConfigFile);
-		pipelineConfigFile.close();
-
-		nlohmann::json productConfigList = jsonObj.at("productConfigList");
-		for (auto &productConfig : productConfigList) {
-			createProduct(productConfig);
-		}
-	}
-	catch (const nlohmann::json::parse_error &e) {
-		std::string errinfo = "Exception occur while parse pipeline config!, exception msg:";
-		errinfo.append(e.what());
-		log_error(errinfo);
-		return false;
-	}
-
-	return true;
-}
 
 
-// 处理得到 productMap
-bool FetchPipeLineConfigFile() {
-	// 调用 GetPipelineConfig.jar
-	std::string jarPath = projDir.c_str();
-	jarPath.append("\\GetPipelineConfig.jar");
-	std::string cfgDir = projDir.c_str();
-	cfgDir.append("\\productconfig\\");
-	std::string baseUrl = "http://" + serverIp + ":" + std::to_string(serverPort) + "/api/client";
-	std::string command = "start /b java -jar " + jarPath + " " + baseUrl + " " + pipelineCode + " " + cfgDir + " " + "pipelineConfig.json";
-	std::system(command.c_str());
-
-	// 检查 flag
-	std::string flagpath = projDir.c_str();
-	flagpath.append("\\productconfig\\flag");
-	auto now = std::chrono::system_clock::now();
-	auto duration_in_seconds = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch());
-	while (!std::filesystem::exists(flagpath)) {
-		now = std::chrono::system_clock::now();
-		auto duration_now_in_seconds_now = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch());
-		if ((duration_now_in_seconds_now.count() - duration_in_seconds.count()) > 20) {
-			log_info("get pipeline configuration failed!");
-			return false;
-		}
-		Sleep(1000);
-	}
-
-	remove(flagpath.c_str());
-	return true;
-}
-
-nlohmann::json ReadPipelineConfig() {
-	// 读取 pipelineConfig.json
-	std::string configfile = projDir.c_str();
-	configfile.append("\\productconfig\\pipelineConfig.json");
-	std::ifstream jsonFile(configfile);
-	if (!jsonFile.is_open()) {
-		log_error("pipeline configuration file open failed!");
-		return nullptr;
-	}
-
-	// 解析 json
-	jsonFile.seekg(0);
-	nlohmann::json jsonObj;
-	try {
-		jsonFile >> jsonObj;
-		jsonFile.close();
-	}
-	catch (const nlohmann::json::parse_error& e) {
-		log_error("pipeline configuration parse failed!");
-		return nullptr;
-	}
-
-	return jsonObj;
-}
-
-std::shared_ptr<std::unordered_map<std::string, std::shared_ptr<Product>>> ParsePipelineConfig(nlohmann::json& jsonObj) {
-	auto productMaps = std::make_shared<std::unordered_map<std::string, std::shared_ptr<Product>>>();
-    try {
-		// 获取pipeline基本信息
-		pipelineCode = jsonObj["pipelineCode"];
-		pipelineName = jsonObj["pipelineName"];
-		auto productConfigList = jsonObj["productConfigList"];
-		for (auto productConfig : productConfigList) {
-			// product
-			std::string productName = productConfig["productName"];
-			std::string productSnCode = productConfig["productSnCode"]; //前9个字符，码枪扫出的
-			productSnCode = productSnCode.substr(0, 9);
-			std::string productSnModel = productConfig["productSnModel"];
-			std::string audioFileName = "xiaoyouxiaoyou";
-			if (productConfig.contains("audioFileName"))
-			{
-				audioFileName = productConfig["audioFileName"];			
-			}
-
-			auto tmpProduct = std::make_shared<Product>(productSnCode, productName, productSnModel);
-
-			// processesMap and testListMap
-			auto processesMap = new std::unordered_map<int, std::vector<std::string>*>();
-			auto testListMap = new std::unordered_map<int, ProcessUnit* >();
-			for (int pinNum = 0; pinNum < 8; pinNum++) {
-				std::vector<std::string>* processVector = new std::vector<std::string>();
-				processesMap->insert(std::make_pair(pinNum, processVector));
-
-				ProcessUnit* processListHead = new ProcessUnit();
-				processListHead->nextunit = processListHead->prevunit = processListHead;
-				processListHead->pin = pinNum;
-				testListMap->insert(std::make_pair(pinNum, processListHead));
-
-				// 初始化 map2bTest
-				product2btest* p2btstNull = new product2btest();
-				p2btstNull->pinNumber = pinNum;
-				map2bTest.insert(std::make_pair(pinNum, p2btstNull));
-			}
-			tmpProduct->SetProcessCodeMap(processesMap);
-			tmpProduct->SetTestListMap(testListMap);
-
-			auto processesConfigList = productConfig["processesConfigList"];
-			for (auto processes : processesConfigList) {
-				std::string processesCode = processes["processesCode"];
-				std::string processesTemplateCode = processes["processesTemplateCode"];
-				std::string processesTemplateName = processes["processesTemplateName"];
-				auto deviceConfigList = processes["deviceConfigList"];
-
-				int cnt = 0;
-				for (auto deviceCfg : deviceConfigList) {
-					ProcessUnit* curUnit = new ProcessUnit();
-					curUnit->processesCode = processesCode;
-					curUnit->processesTemplateCode = processesTemplateCode;
-					curUnit->processesTemplateName = processesTemplateName;
-					curUnit->productName = productName;
-					curUnit->productSnCode = productSnCode;
-					curUnit->productSnModel = productSnModel;
-					int gpioPin;
-					switch (deviceTypeCodemap[deviceCfg["deviceTypeCode"]]) {
-					case 0: // 此处无 GPIO
-						break;
-					case 1: { //获取绑定的 pin 和扫码枪，光电开关
-						auto deviceParamConfigList = deviceCfg["deviceParamConfigList"];
-						for (auto deviceParam : deviceParamConfigList) {
-							switch (lightParammap[deviceParam["paramCode"]]) {
-							case 0: // 延迟开始工作时间（ms）
-								break;
-							case 1: { // 扫码枪编码 todo: 检查需在读取 pin 脚后
-								//std::string codeReaderDeviceCode = (std::string)deviceParam["paramValue"];
-								////if (!triggerMap[gpioPin]._Equal(codeReaderDeviceCode)) {
-								////	AppendLog(_T("警告：配置中的光电开关绑定的 GPIO pin 和预设值不一样！\n"));
-								////}
-								//std::vector<std::string> codeReaderDeviceCodes = triggerMaps[gpioPin];
-								//int cnt = 0;
-								//for (std::string code : codeReaderDeviceCodes) {
-								//	if (codeReaderDeviceCode._Equal(code)) {
-								//		cnt++;
-								//	}
-								//}
-								//if (0 == cnt) {
-								//	AppendLog(_T("警告：配置中的光电开关绑定的 GPIO pin 和预设值不一样！\n"));
-								//}
-								break;
-							}
-							case 2: { // pin脚
-								gpioPin = std::stoi((std::string)deviceParam["paramValue"]);
-								std::vector<std::string>* tmpProcessVector = processesMap->find(gpioPin)->second;
-								tmpProcessVector->push_back(processesCode);
-								break;
-							}
-							case 3: { // GPIO设备号 todo: 写死
-								std::string gpioDeviceCode = (std::string)deviceParam["paramValue"];
-								auto it = deviceMap.find(gpioDeviceCode);
-								if (it->second->e_deviceTypeCode != "GPIO") {
-									//AppendLog(_T("警告：配置中的 GPIO code 和预设值不一样！\n"));
-								}
-								break;
-							}
-							default:
-								break;
-							}
-						}
-						break;
-					}
-					case 2: { //camera
-						curUnit->deviceTypeCode = deviceCfg["deviceTypeCode"];
-						curUnit->deviceCode = deviceCfg["deviceCode"];
-						if (curUnit->deviceCode == "DC100011") {
-						}
-						curUnit->eq = deviceMap[curUnit->deviceCode];
-						curUnit->parameter = deviceCfg["deviceParamConfigList"];
-						auto deviceParamConfigList = deviceCfg["deviceParamConfigList"];
-						for (auto deviceParam : deviceParamConfigList) {
-							switch (CameraParammap[deviceParam["paramCode"]]) {
-							case 0:
-								break;
-							case 1:
-								break;
-							case 2:
-								break;
-							case 3:
-								curUnit->laterncy = std::stol((std::string)deviceParam["paramValue"]);
-								break;
-							case 4:
-								break;
-							case 5:
-								break;
-							default:
-								break;
-							}
-						}
-						ProcessUnit* processListHead = testListMap->find(gpioPin)->second; // todo: gpioPin若不存在，需初始化
-						insertProcessUnit(processListHead, curUnit);
-						break;
-					}
-					case 3: { //扫码枪
-						curUnit->deviceTypeCode = deviceCfg["deviceTypeCode"];
-						curUnit->deviceCode = deviceCfg["deviceCode"];
-
-						// 跳过光电开关绑定的扫码枪
-						//if (curUnit->deviceCode == triggerMap[gpioPin]) {
-						//	
-						//	delete curUnit;
-						//	break;
-						//}
-
-						for (auto& deviceCode : triggerMaps[gpioPin]) {
-							if (curUnit->deviceCode == deviceCode) {
-								delete curUnit;
-								curUnit = nullptr;
-								break;
-							}
-						}
-						if (curUnit == nullptr) {
-							break;
-						}
-
-						curUnit->eq = deviceMap[curUnit->deviceCode];
-						curUnit->parameter = deviceCfg["deviceParamConfigList"];
-						auto deviceParamConfigList = deviceCfg["deviceParamConfigList"];
-						for (auto deviceParam : deviceParamConfigList) {
-							switch (ScanningGunParammap[deviceParam["paramCode"]]) {
-							case 0:
-								break;
-							case 1:
-								curUnit->laterncy = std::stol((std::string)deviceParam["paramValue"]);
-								break;
-							case 2:
-								break;
-							case 3:
-								break;
-							case 4:
-								break;
-							case 5:
-								break;
-							case 6:
-								break;
-							default:
-								break;
-							}
-						}
-						ProcessUnit* processListHead = testListMap->find(gpioPin)->second;
-						insertProcessUnit(processListHead, curUnit);
-						break;
-					}
-					case 4: {//Speaker设备
-						curUnit->audioFileName = audioFileName;
-						curUnit->deviceTypeCode = deviceCfg["deviceTypeCode"];
-						curUnit->deviceCode = deviceCfg["deviceCode"];
-						curUnit->eq = deviceMap[curUnit->deviceCode];
-						curUnit->parameter = deviceCfg["deviceParamConfigList"];
-						auto deviceParamConfigList = deviceCfg["deviceParamConfigList"];
-						for (auto deviceParam : deviceParamConfigList) {
-							if ((std::string)deviceParam["paramCode"] == "devicelatency") {
-								curUnit->laterncy = std::stol((std::string)deviceParam["paramValue"]);
-							}
-						}
-						ProcessUnit* processListHead = testListMap->find(gpioPin)->second;
-						insertProcessUnit(processListHead, curUnit);
-						break;
-					}
-					case 5: // todo: 加串口
-						break;
-					case 6: {//Recorder设备
-						curUnit->deviceTypeCode = deviceCfg["deviceTypeCode"];
-						curUnit->deviceCode = deviceCfg["deviceCode"];
-						curUnit->eq = deviceMap[curUnit->deviceCode];
-						curUnit->parameter = deviceCfg["deviceParamConfigList"];
-						auto deviceParamConfigList = deviceCfg["deviceParamConfigList"];
-						for (auto deviceParam : deviceParamConfigList) {
-							if ((std::string)deviceParam["paramCode"] == "devicelatency") {
-								curUnit->laterncy = std::stol((std::string)deviceParam["paramValue"]);
-							}
-						}
-						ProcessUnit* processListHead = testListMap->find(gpioPin)->second;
-						insertProcessUnit(processListHead, curUnit);
-						break;
-					}
-					default:
-						break;
-					}
-				}
-			}
-			productMaps->insert(std::make_pair(productSnCode, tmpProduct));
-		}
-	}
-	catch (const nlohmann::json::parse_error& e) {
-		log_error("pipeline configuration parse failed!");
-	}
-
-	return productMaps;
-}
 
 DWORD __stdcall InfraredRemoteCtlThread(LPVOID lpParam) {
 	CloseHandle(GetCurrentThread());
@@ -1558,8 +788,366 @@ void TriggerOff(UINT gpioPin)
 }
 
 
-int main()
+
+
+
+void createDevice(const nlohmann::json &deviceConfig)
 {
+	std::string deviceTypeId, deviceTypeCode, deviceTypeName, deviceCode, deviceName;
+
+	deviceCode = deviceConfig.at("deviceCode");
+	deviceName = deviceConfig["deviceName"];
+	deviceTypeCode = deviceConfig.at("deviceTypeCode");
+	deviceTypeName = deviceConfig["deviceTypeName"];
+	deviceTypeId = deviceConfig["deviceTypeId"];
+
+	switch (device_type_map[deviceTypeCode]) {
+	case 0: { //Gpio
+		if (device_map.find(deviceCode) == device_map.end()) {
+			auto gpioObj = GPIO::create(deviceTypeId, deviceTypeName, deviceTypeCode, deviceName, deviceCode);
+			if (gpioObj) {
+				device_map.insert(std::make_pair(deviceCode, gpioObj));
+			}
+			else {
+				log_error("Gpio device " + deviceCode + " create failed!");
+			}
+		}
+		break;
+	}
+	case 1: { //Light switch
+		int pin;
+		std::string linkedScanningGun = "";
+		std::string gpioDeviceCode = "";
+		auto deviceParamList = deviceConfig.at("deviceParamConfigList");
+		for (auto deviceParam : deviceParamList) {
+			switch (light_param_map[deviceParam["paramCode"]]) {
+			case 0:
+				linkedScanningGun = deviceParam["paramValue"];
+				break;
+			case 1:
+				pin = std::stoi((std::string)deviceParam["paramValue"]);
+				break;
+			case 2:
+				gpioDeviceCode = deviceParam["paramValue"];
+				break;
+			default:
+				break;
+			}
+		}
+
+		if (trigger_map.find(pin) == trigger_map.end()) {
+			std::vector<std::string> vlinkedScanningGun;
+			vlinkedScanningGun.push_back(linkedScanningGun);
+			trigger_map.insert(std::make_pair(pin, vlinkedScanningGun));
+		}
+		else {
+			trigger_map.find(pin)->second.push_back(linkedScanningGun);
+		}
+
+		if (device_map.find(gpioDeviceCode) != device_map.end()) {
+			auto gpioObj = std::dynamic_pointer_cast<GPIO>(device_map.find(gpioDeviceCode)->second);
+			gpioObj->addTriggerPin(pin);
+		}
+
+		auto lightSwitchObj = std::make_shared<LightSwitch>(pin, stopFlag, WM_GPIOBASEMSG, codereaderID, true, deviceGPIO, deviceTypeId, deviceTypeName, deviceTypeCode, deviceName, deviceCode);
+		device_map.insert(std::make_pair(deviceCode, lightSwitchObj));
+		break;
+	}
+	case 2: { //Camera
+		if (device_map.find(deviceCode) == device_map.end()) {
+			std::string ipAddr = deviceConfig.at("ipAddr");
+			auto& deviceParamConfigList = deviceConfig["deviceParamConfigList"];
+			auto cameraObj = Camera::create(ipAddr, deviceParamConfigList, deviceTypeId, deviceTypeName, deviceTypeCode, deviceName, deviceCode);
+			if (cameraObj) {
+				device_map.insert(std::make_pair(deviceCode, cameraObj));
+			}
+			else {
+				log_error("Camera device " + deviceCode + " create failed!");
+			}
+		}
+		break;
+	}
+	case 3: { //Scangun
+		if (device_map.find(deviceCode) == device_map.end()) {
+			std::string ipAddr = deviceConfig.at("ipAddr");
+			auto& deviceParamConfigList = deviceConfig["deviceParamConfigList"];
+			auto codeReaderObj = CodeReader::create(ipAddr, deviceParamConfigList, deviceTypeId, deviceTypeName, deviceTypeCode, deviceName, deviceCode);
+			if (codeReaderObj) {
+				device_map.insert(std::make_pair(deviceCode, codeReaderObj));
+			}
+			else {
+				log_error("Scangun device " + deviceCode + " create failed!");
+			}
+		}
+		break;
+	}
+	case 4: { //Audio equitment
+		auto audioObj = std::make_shared<AudioEquipment>(deviceTypeId, deviceTypeName, deviceTypeCode, deviceName, deviceCode);
+		device_map.insert(std::make_pair(deviceCode, audioObj));
+		break;
+	}
+	case 5: { //Serial port
+		std::string portName = "";
+		int baudRate = 9600;
+		std::string message = "";
+		int devicePin = 0;
+		if (deviceConfig.contains("deviceParamConfigList")) {
+			auto deviceParamConfigList = deviceConfig["deviceParamConfigList"];
+			for (auto deviceParamConfig : deviceParamConfigList) {
+				switch (serialport_param_map[deviceParamConfig["paramCode"]]) {
+				case 0:
+					// devicelatency
+					break;
+				case 1:
+					// baudRate
+					baudRate = std::stoi((std::string)deviceParamConfig["paramValue"]);
+					break;
+				case 2:
+					portName = deviceParamConfig["paramValue"];
+					break;
+				case 3:
+					message = deviceParamConfig["paramValue"];
+					break;
+				case 4:
+					devicePin = remoteCtrlPin = std::stoi((std::string)deviceParamConfig["paramValue"]);
+				default:
+					break;
+				}
+			}
+		}
+		SerialCommunication* scDevice = new SerialCommunication(sdeviceTypeId, sdeviceTypeName, sdeviceTypeCode, sdeviceCode, sdeviceName, portName, baudRate, message, devicePin);
+		device_map.insert(std::make_pair(sdeviceCode, scDevice));
+		break;
+	}
+	default:
+		break;
+	}
+
+	return;
+}
+
+bool parseBasicConfig()
+{
+	std::string path = projDir.c_str();
+	path.append("\\basicconfig\\basicConfig.json");
+
+	std::ifstream configFile(path);
+	if (!configFile.is_open()) {
+		log_error("Open basic configuration file failed!");
+		return false;
+	}
+
+	try {
+		nlohmann::json jsonObj = nlohmann::json::parse(configFile);
+		configFile.close();
+
+		pipeline_code = jsonObj.at("pipelineCode");
+		server_ip = jsonObj.at("serverIp");
+		server_port = jsonObj.at("serverPort");
+
+		nlohmann::json deviceConfigList = jsonObj.at("deviceConfigList");
+		for (auto& deviceConfig : deviceConfigList) {
+			createDevice(deviceConfig);
+		}
+	}
+	catch (const nlohmann::json::parse_error& e) {
+		std::string errinfo = "Exception occur while parse basic config! exception msg:";
+		errinfo.append(e.what());
+		log_error(errinfo);
+		return false;
+	}
+
+	return true;
+}
+
+void createProcessUnit(const nlohmann::json &deviceConfig, std::shared_ptr<ProcessUnit> &processUnit) {
+	std::string deviceCode = deviceConfig.at("deviceCode");
+
+	processUnit->deviceCode = deviceCode;
+	processUnit->deviceTypeCode = deviceConfig.at("deviceTypeCode");
+	processUnit->device = device_map.find(deviceCode)->second;
+	processUnit->param = deviceConfig["deviceConfigList"];
+
+	return;
+}
+
+void createProduct(const nlohmann::json &productConfig)
+{
+	std::string productName = productConfig["productName"];
+	std::string productSnCode = productConfig.at("productSnCode");
+	std::string productSnModel = productConfig["productSnModel"];
+
+	auto product = std::make_shared<Product>(productSnCode, productName, productSnModel);
+
+	nlohmann::json processConfigList = productConfig["processConfigList"];
+	for (auto& processConfig : processConfigList) {
+		std::string processCode = processConfig.at("processCode");
+		std::string processTemplateCode = processConfig["processTemplateCode"];
+		std::string processTemplateName = processConfig["processTemplateName"];
+		nlohmann::json& deviceConfigList = processConfig["deviceConfigList"];
+
+		int gpioPin = 0;
+		for (auto& deviceConfig : deviceConfigList) {
+			std::string deviceCode = deviceConfig.at("deviceCode");
+			std::string deviceTypeCode = deviceConfig.at("deviceTypeCode");
+
+			switch (device_type_map[deviceTypeCode]) {
+			case 1: {
+				auto lightObj = dynamic_pointer_cast<std::shared_ptr<Light>>(device_map.find(deviceCode)->second);
+				gpioPin = lightObj->getLinkPin();
+				break;
+			}
+			case 2:
+			case 3:
+			case 4:
+			case 5:
+			case 6: {
+				auto curUnit = std::make_shared<ProcessUnit>();
+				createProcessUnit(deviceConfig, curUnit);
+				product->addProcessUnit(gpioPin, curUnit);
+				break;
+			}
+			default:
+				break;
+			}
+		}
+	}
+
+	product_map.insert(std::make_pair(productSnCode, product));
+	return;
+}
+
+bool parsePipelineConfig()
+{
+	std::string path = projDir.c_str();
+	path.append("\\pipelineconfig\\pipelineConfig.json");
+
+	std::ifstream pipelineConfigFile(path);
+	if (!pipelineConfigFile.is_open()) {
+		log_error("Open pipeline configuration file failed!");
+		return false;
+	}
+
+	try {
+		nlohmann::json jsonObj = nlohmann::json::parse(pipelineConfigFile);
+		pipelineConfigFile.close();
+
+		nlohmann::json productConfigList = jsonObj.at("productConfigList");
+		for (auto& productConfig : productConfigList) {
+			createProduct(productConfig);
+		}
+	}
+	catch (const nlohmann::json::parse_error &e) {
+		std::string errinfo = "Exception occur while parse pipeline config! exception msg:";
+		errinfo.append(e.what());
+		log_error(errinfo);
+		return false;
+	}
+
+	return true;
+}
+
+bool fetchPipelineConfig() {
+	httplib::Client cli(server_ip, server_port);
+	std::string path = "/api/client/pipeline/config?pipelineCode=" + pipeline_code;
+	bool result = false;
+
+	std::string configPath = projDir.c_str();
+	configPath.append("\\pipelineconfig\\pipelineConfig.json");
+	std::ofstream pipelineConfigFile(configPath);
+
+	if (!pipelineConfigFile.is_open()) {
+		log_error("Open pipeline configuration file failed!");
+		return false;
+	}
+
+	try {
+		for (int i = 0; i < 3; i++) {
+			auto res = cli.Get(path);
+			if (res && res->status == 200) {
+				nlohmann::json jsonObj = nlohmann::json::parse(res->body);
+				pipelineConfigFile << jsonObj.at("data");
+				result = true;
+				break;
+			}
+		}
+	}
+	catch (const nlohmann::json::parse_error &e) {
+		std::string errinfo = "Exception occur while parse pipeline config! exception msg:";
+		errinfo.append(e.what());
+		log_error(errinfo);
+	}
+
+	pipelineConfigFile.close();
+
+	return result;
+}
+
+void alarm(nlohmann::json &jsonobj, httplib::Response &res) {
+	if (!jsonobj.contains("parameters") ||
+		!jsonobj["parameters"].contains("deviceCode")) {
+		res.status = 400;
+		res.set_content("invalid request!", "text/plain");
+		return;
+	}
+
+	std::string deviceCode = jsonobj["parameters"]["deviceCode"];
+	if (device_map.find(deviceCode) == device_map.end()) {
+		res.status = 404;
+		res.set_content("target device not found!", "text/plain");
+		return;
+	}
+
+	auto device = device_map.find(deviceCode)->second;
+	if (device->getDeviceTypeCode() != "AlarmLight") {
+		res.status = 404;
+		res.set_content("target device type error!", "text/plain");
+		return;
+	}
+
+	// TODO: alarm
+
+	res.status = 200;
+	res.set_content("success!", "text/plain");
+
+	return;
+}
+
+static std::unordered_map<std::string, void (*)(nlohmann::json&, httplib::Response&)> notification_map = {
+	{"alarm", alarm}
+};
+
+void httpServerThread(LPVOID lpParam)
+{
+	httplib::Server svr;
+
+	svr.Post("/notification", [](const httplib::Request &req, httplib::Response &res) {
+		nlohmann::json jsonobj = nlohmann::json::parse(req.body);
+
+		
+		if (!jsonobj.contains("function")) {
+			res.status = 400;
+			res.set_content("invalid request!", "text/plain");
+			return;
+		}
+
+		if (notification_map.find(jsonobj["function"]) == notification_map.end()) {
+			res.status = 404;
+			res.set_content("unsupport function!", "text/plain");
+			return;
+		}
+
+		auto function = notification_map.find(jsonobj["function"])->second;
+		function(jsonobj, res);
+
+		return;
+	});
+
+	svr.listen("0.0.0.0", 9090);
+	return;
+}
+
+int main() {
 	DWORD dirLen = GetCurrentDirectoryA(0, NULL);
 	projDir.reserve(dirLen);
 	GetCurrentDirectoryA(dirLen, &projDir[0]);
@@ -1568,57 +1156,34 @@ int main()
 	logPath.append("\\logs\\rotating.txt");
 	log_init("AIQIForHaier", logPath, 1048576 * 50, 3);
 
-	HANDLE hHttpPost1 = CreateThread(NULL, 0, HttpPostThread, NULL, 0, NULL);
-	HANDLE hHttpServer = CreateThread(NULL, 0, HttpServer, NULL, 0, NULL);
+	std::thread httpServer = std::thread(HttpServerThread);
+	std::thread httpPoster = std::thread(HttpPostThread);
 
-	bool parseResult = ParseBasicConfig();
-	if (false == parseResult) {
+	if (false == parseBasicConfig()) {
 		log_error("Invalid basic configuration!");
-		log_finish();
-		return -1;
+		goto err;
 	}
 
-	bool testResult = StartDeviceSelfTesting();
-	if (false == testResult) {
-		log_error("Device self testing failed!");
-		log_finish();
-		return -1;
+	if (false == fetchPipelineConfig()) {
+		log_error("Fetch pipeline configuration failed!");
+		goto err;
 	}
 
-	bool fetchResult = false;
-	for (int i = 0; i < 3; i++) {
-		fetchResult = FetchPipeLineConfigFile();
-		if (true == fetchResult) {
-			break;
-		}
-	}
-	if (false == fetchResult) {
-		log_error("Pipeline config fetch failed!");
-		log_finish();
-		return -1;
-	}
-
-	nlohmann::json jsonObj = ReadPipelineConfig();
-	if (nullptr == jsonObj) {
+	if (false == parsePipelineConfig()) {
 		log_error("Invalid pipeline configuration!");
-		log_finish();
-		return -1;
+		goto err;
 	}
-
-	auto map = ParsePipelineConfig(jsonObj);
-	std::unique_lock<std::mutex> lock(map_mutex);
-	productMap = map;
-	lock.unlock();
 
 	struct gpioMsg msg;
-
 	while (true)
 	{
 		GpioMessageQueue.wait(msg);
 		GpioMsgProc(msg);
 	}
 
-	productMap = nullptr;
+err:
+	product_map.clear();
+	device_map.clear();
 	log_finish();
 
 	return 0;

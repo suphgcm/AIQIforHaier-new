@@ -16,7 +16,7 @@ struct ProcessUnit {
 
 	std::string deviceTypeCode;
 	std::string deviceCode;
-	equnit *device;
+	std::shared_ptr<equnit> device;
 	nlohmann::json param;
 };
 

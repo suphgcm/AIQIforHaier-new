@@ -30,9 +30,14 @@ struct httpMsg {
 	std::string text;
 };
 
-struct gpioMsg {
-	UINT gpioPin;
-	int message;
+enum kGpioMsg {
+	kTriggerOn = 0,
+	kTriggerOff,
+};
+
+struct GpioEvent {
+	unsigned char gpioPin;
+	enum kGpioMsg msg;
 };
 
 template<class T> class MessageQueue {
@@ -56,19 +61,4 @@ private:
 	std::mutex _mutex;
 	std::queue<T> _queue;
 	std::condition_variable _cv;
-};
-
-class Singleton {
-public:
-	static MessageQueue<struct httpMsg>& instance()
-	{
-		static Singleton _singleton;
-		return _singleton._mesque;
-	}
-private:
-	Singleton() {};
-	Singleton(const Singleton&);
-	Singleton& operator=(const Singleton&);
-	~Singleton() {};
-	MessageQueue<struct httpMsg> _mesque;
 };
