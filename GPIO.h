@@ -3,6 +3,7 @@
 #include <thread>
 
 #include "equnit.h"
+#include "MessageQueue.h"
 
 class GPIO : public equnit {
 public:
@@ -17,6 +18,7 @@ public:
 	}
 
     void addTriggerPin(int pin);
+	MessageQueue<GpioEvent>& getEventQueue() { return eventQueue_; }
 
 private:
 	void *gpioHandle_ = nullptr;
@@ -25,11 +27,13 @@ private:
 		int pin;
 		unsigned char lastLevel;
 	};
-	std::vector<triggerPin> triggerPins;
+	std::vector<triggerPin> triggerPins_;
 
 	std::thread threadHandle_;
 	bool isThreadRunning_ = false;
 	static void mainWorkThread(void *param);
+
+	MessageQueue<GpioEvent> eventQueue_;
 
 	bool init_();
 	void destroy_();

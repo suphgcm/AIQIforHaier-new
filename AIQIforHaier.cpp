@@ -35,6 +35,7 @@ std::string pipeline_code = "CX202309141454000002"; // 一台工控机只跑一�
 std::string server_ip = "192.168.0.189";
 int server_port = 9003;
 
+class MessageQueue<struct GpioEvent> gpio_msg_queue;
 
 int stopFlagPin = 1;
 std::string pipelineName;
@@ -1174,10 +1175,10 @@ int main() {
 		goto err;
 	}
 
-	struct gpioMsg msg;
+
 	while (true)
 	{
-		GpioMessageQueue.wait(msg);
+		gpio_msg_queue.wait(msg);
 		GpioMsgProc(msg);
 	}
 

@@ -5,6 +5,8 @@
 #include "GPIO.h"
 #include "MessageQueue.h"
 
+extern class MessageQueue<struct GpioEvent> gpio_msg_queue;
+
 bool GPIO::init_() {
 	gpioHandle_ = new(Uhi);
 	if (gpioHandle_ == nullptr || false == ((Uhi *)gpioHandle_)->GetWinIoInitializeStates()) {
@@ -62,13 +64,11 @@ int GPIO::setPinLevel_(int pinNumber, unsigned char level) {
 	return 0;
 }
 
-class MessageQueue<struct GpioEvent> gpio_msg_queue;
-
 void GPIO::mainWorkThread(void *param) {
 	GPIO *gpio = static_cast<GPIO *>(param);
 
 	while (gpio->isThreadRunning_ == true) {
-		for (auto &triPin : gpio->triggerPins) {
+		for (auto &triPin : gpio->triggerPins_) {
 			unsigned char level = 0;
 			int ret = gpio->getPinLevel_(triPin.pin, level);
 			if (-1 == ret) {
@@ -122,7 +122,7 @@ void GPIO::addTriggerPin(int pin) {
 
 	triPin.pin = pin;
 	triPin.lastLevel = 1;
-	triggerPins.push_back(triPin);
+	triggerPins_.push_back(triPin);
 
 	return;
 }
