@@ -961,7 +961,8 @@ bool parseBasicConfig()
 	return true;
 }
 
-void createProcessUnit(const nlohmann::json &deviceConfig, std::shared_ptr<ProcessUnit> &processUnit) {
+void createProcessUnit(const nlohmann::json &deviceConfig, std::shared_ptr<ProcessUnit> &processUnit) 
+{
 	std::string deviceCode = deviceConfig.at("deviceCode");
 
 	processUnit->deviceCode = deviceCode;
@@ -985,7 +986,7 @@ void createProduct(const nlohmann::json &productConfig)
 		std::string processCode = processConfig.at("processCode");
 		std::string processTemplateCode = processConfig["processTemplateCode"];
 		std::string processTemplateName = processConfig["processTemplateName"];
-		nlohmann::json& deviceConfigList = processConfig["deviceConfigList"];
+		nlohmann::json &deviceConfigList = processConfig["deviceConfigList"];
 
 		int gpioPin = 0;
 		for (auto& deviceConfig : deviceConfigList) {
@@ -1048,7 +1049,8 @@ bool parsePipelineConfig()
 	return true;
 }
 
-bool fetchPipelineConfig() {
+bool fetchPipelineConfig() 
+{
 	httplib::Client cli(server_ip, server_port);
 	std::string path = "/api/client/pipeline/config?pipelineCode=" + pipeline_code;
 	bool result = false;
@@ -1084,11 +1086,12 @@ bool fetchPipelineConfig() {
 	return result;
 }
 
-void alarm(nlohmann::json &jsonobj, httplib::Response &res) {
+void alarm(nlohmann::json &jsonobj, httplib::Response &res)
+{
 	if (!jsonobj.contains("parameters") ||
 		!jsonobj["parameters"].contains("deviceCode")) {
 		res.status = 400;
-		res.set_content("invalid request!", "text/plain");
+		res.set_content("miss parameter field!", "text/plain");
 		return;
 	}
 
@@ -1114,7 +1117,7 @@ void alarm(nlohmann::json &jsonobj, httplib::Response &res) {
 	return;
 }
 
-static std::unordered_map<std::string, void (*)(nlohmann::json&, httplib::Response&)> notification_map = {
+static std::unordered_map<std::string, void (*)(nlohmann::json&, httplib::Response&)> notification_function_map = {
 	{"alarm", alarm}
 };
 
@@ -1128,17 +1131,17 @@ void httpServerThread(LPVOID lpParam)
 		
 		if (!jsonobj.contains("function")) {
 			res.status = 400;
-			res.set_content("invalid request!", "text/plain");
+			res.set_content("miss function field!", "text/plain");
 			return;
 		}
 
-		if (notification_map.find(jsonobj["function"]) == notification_map.end()) {
-			res.status = 404;
+		if (notification_function_map.find(jsonobj["function"]) == notification_function_map.end()) {
+			res.status = 501;
 			res.set_content("unsupport function!", "text/plain");
 			return;
 		}
 
-		auto function = notification_map.find(jsonobj["function"])->second;
+		auto function = notification_function_map.find(jsonobj["function"])->second;
 		function(jsonobj, res);
 
 		return;
@@ -1148,10 +1151,9 @@ void httpServerThread(LPVOID lpParam)
 	return;
 }
 
-int main() {
-	DWORD dirLen = GetCurrentDirectoryA(0, NULL);
-	projDir.reserve(dirLen);
-	GetCurrentDirectoryA(dirLen, &projDir[0]);
+int main()
+{
+	projDir = std::filesystem::current_path().string();
 
 	std::string logPath = projDir.c_str();
 	logPath.append("\\logs\\rotating.txt");
@@ -1175,9 +1177,7 @@ int main() {
 		goto err;
 	}
 
-
-	while (true)
-	{
+	while (true) {
 		gpio_msg_queue.wait(msg);
 		GpioMsgProc(msg);
 	}
